@@ -1,6 +1,7 @@
 import Quiz from "../models/Quiz.js";
 import User from "../models/User.js";
 import DailyQuizAttempt from "../models/DailyQuizAttempt.js";
+import { TOPUP_REQUIRED_MESSAGE } from "../services/subscriptionService.js";
 
 function shuffleArray(arr) {
   const a = [...arr];
@@ -16,6 +17,17 @@ const getToday = () => {
   today.setHours(0, 0, 0, 0);
   return today;
 };
+
+const DUMMY_LEADERBOARD = [
+  { userId: "SW-1001", phone: "233241234567", dailyPoints: 100, dailyTimeTaken: 118 },
+  { userId: "SW-1002", phone: "233559876543", dailyPoints: 90, dailyTimeTaken: 132 },
+  { userId: "SW-1003", phone: "233207654321", dailyPoints: 80, dailyTimeTaken: 145 },
+  { userId: "SW-1004", phone: "233501112233", dailyPoints: 70, dailyTimeTaken: 151 },
+  { userId: "SW-1005", phone: "233544556677", dailyPoints: 60, dailyTimeTaken: 160 },
+  { userId: "SW-1006", phone: "233209988776", dailyPoints: 50, dailyTimeTaken: 168 },
+  { userId: "SW-1007", phone: "233551234890", dailyPoints: 40, dailyTimeTaken: 175 },
+  { userId: "SW-1008", phone: "233276543210", dailyPoints: 30, dailyTimeTaken: 182 },
+];
 
 export const createQuiz = async (req, res) => {
   try {
@@ -73,7 +85,7 @@ export const getQuestionSet = async (req, res) => {
       return res.status(403).json({
         success: false,
         code: "TOPUP_REQUIRED",
-        message: "You gave a wrong answer in your last set. Please top up to continue.",
+        message: TOPUP_REQUIRED_MESSAGE,
       });
     }
 
@@ -244,7 +256,7 @@ export const markQuizAttempted = async (req, res) => {
       return res.json({
         success: true,
         quizAccessStatus: "topup_required",
-        message: "Set failed. Please top up to get the next 10 questions.",
+        message: TOPUP_REQUIRED_MESSAGE,
       });
     }
 
@@ -261,7 +273,7 @@ export const markQuizAttempted = async (req, res) => {
       dailyAttempt.setsCompleted >= 20 &&
       dailyAttempt.dailyPoints === questionsPerSet * 20
     ) {
-      dailyAttempt.isEligibleForLeaderboard = true;
+      dailyAttempt.isEligibleForLeaderboard = process.env.IS_ELIGIBLE_FOR_LEADERBOARD === "true";
       user.totalPoints += dailyAttempt.dailyPoints;
       user.totalTimeTaken += dailyAttempt.dailyTimeTaken;
       await user.save();
@@ -315,7 +327,16 @@ export const getLeaderboard = async (req, res) => {
       { $limit: 10 },
     ]);
 
-    return res.json({ success: true, leaderboard: dailyLeaderboard });
+    const useDummyOnly = process.env.USE_DUMMY_LEADERBOARD === "true";
+    let leaderboard = dailyLeaderboard;
+    let isDummy = false;
+
+    if (useDummyOnly || leaderboard.length === 0) {
+      leaderboard = DUMMY_LEADERBOARD;
+      isDummy = true;
+    }
+
+    return res.json({ success: true, leaderboard, isDummy });
   } catch (err) {
     console.error("getLeaderboard error:", err);
     return res.status(500).json({ success: false, message: err.message });

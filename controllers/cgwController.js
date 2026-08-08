@@ -378,6 +378,8 @@ export const handleCGWCallback = async (req, res) => {
       );
       const token = createToken(user._id);
       const params = new URLSearchParams({
+        token,
+        status: "success",
         subscribed: "true",
         msisdn: callbackData.msisdn,
         offerCode,

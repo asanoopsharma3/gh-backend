@@ -3,7 +3,9 @@ import User from "../models/User.js";
 export const DAILY_QUESTION_LIMIT = 10;
 export const SUBSCRIPTION_CYCLE_MS = 24 * 60 * 60 * 1000;
 export const LIMIT_REACHED_MESSAGE =
-  "Your 10 question set is completed. Please top up to continue.";
+  "You have exhausted your 10 set of questions for the day. Please top up to get additional 10 set of questions.";
+
+export const TOPUP_REQUIRED_MESSAGE = LIMIT_REACHED_MESSAGE;
 
 const addCycle = (date) => new Date(date.getTime() + SUBSCRIPTION_CYCLE_MS);
 
@@ -65,6 +67,36 @@ export const setSubscriptionStatus = async (user, status) => {
   user.subscriptionStatus = status;
   if (status !== "active") {
     user.isAttemptQuiz = true;
+  }
+  await user.save();
+  return user;
+};
+
+export const normalizeSubscriptionMsisdn = (value) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.startsWith("233")) return digits;
+  if (digits.startsWith("0")) return `233${digits.slice(1)}`;
+  return `233${digits}`;
+};
+
+export const activateSubscriptionByMsisdn = async (msisdn) => {
+  const normalized = normalizeSubscriptionMsisdn(msisdn);
+  if (!normalized || normalized.length < 12) {
+    throw new Error("Invalid MSISDN format. Expected format: 233XXXXXXXXX");
+  }
+
+  const phone = `+${normalized}`;
+  let user = await User.findOne({ $or: [{ phone }, { phone: normalized }] });
+  if (!user) {
+    user = await User.create({ phone });
+  }
+
+  user.subscriptionStatus = "active";
+  user.isAttemptQuiz = false;
+  if (!user.subscriptionStartTime) {
+    user.subscriptionStartTime = new Date();
+    user.nextPlayTime = new Date(Date.now() + SUBSCRIPTION_CYCLE_MS);
   }
   await user.save();
   return user;
