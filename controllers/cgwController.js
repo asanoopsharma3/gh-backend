@@ -21,8 +21,12 @@ import MsisdnLog from "../models/MsisdnLog.js";
 import SDPCallback from "../models/SDPCallback.js";
 import SDPLog from "../models/SDPLog.js";
 
-const createToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "30d" });
+const createToken = (user) =>
+  jwt.sign(
+    { id: user._id, tokenVersion: user.tokenVersion || 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: "30d" }
+  );
 
 const getRequestMsisdn = (req) =>
   req.msisdn ||
@@ -70,6 +74,9 @@ const applySubscriptionStatus = async (msisdn, status, lifecycle = "", offerCode
   if (isBillingSuccess) {
     user.subscriptionStatus = "active";
     user.isAttemptQuiz = false;
+    user.unsubscribedAt = null;
+    user.lastUnsubscribe = undefined;
+    user.markModified("lastUnsubscribe");
     if (isTopupBillingSuccess) {
       user.questionsPlayedToday = 0;
     } else if (!user.subscriptionStartTime) {
@@ -376,7 +383,7 @@ export const handleCGWCallback = async (req, res) => {
         "",
         offerCode
       );
-      const token = createToken(user._id);
+      const token = createToken(user);
       const params = new URLSearchParams({
         token,
         status: "success",

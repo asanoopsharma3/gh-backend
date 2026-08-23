@@ -1,6 +1,7 @@
 import User from "../models/User.js";
 import Quiz from "../models/Quiz.js";
 import GhanaCallbackLog from "../models/GhanaCallbackLog.js";
+import MTNCallbackLog from "../models/MTNCallbackLog.js";
 import SDPLog from "../models/SDPLog.js";
 import csv from "csv-parser";
 import fs from "fs";
@@ -43,6 +44,14 @@ const normalizeStatus = (status = "", reason = "", lifecycle = "") => {
   const statusText = String(status).toLowerCase();
   const reasonText = String(reason).toLowerCase();
   const lifecycleText = String(lifecycle).toLowerCase();
+
+  if (
+    lifecycleText.includes("unsub") ||
+    statusText.includes("unsub") ||
+    reasonText.includes("unsubscrib")
+  ) {
+    return "unsubscribed";
+  }
 
   if (
     reasonText.includes("insufficient") ||
@@ -100,6 +109,7 @@ const matchesReport = (item, report) => {
   if (report === "renewal") return item.status === "renewal";
   if (report === "churn") return item.status === "churn";
   if (report === "failed") return item.status === "failed";
+  if (report === "unsubscribed") return item.status === "unsubscribed";
   return true;
 };
 
@@ -123,7 +133,10 @@ const getAdminEvents = async ({ date, report, search } = {}) => {
     offerCode: item.offerCode || "",
     reason: item.reason || "-",
     nextBillingDate: "",
-    status: item.normalizedStatus || normalizeStatus(item.status, item.reason, item.lifecycle),
+    status:
+      item.normalizedStatus === "unsubscribed"
+        ? "unsubscribed"
+        : normalizeStatus(item.status, item.reason, item.lifecycle),
     rawStatus: item.status || "-",
     chargingAmount: Number(item.chargingAmount || 0),
     lifecycle: item.lifecycle || "-",
@@ -185,6 +198,14 @@ const buildSummary = async (events) => {
     renewals: events.filter((item) => item.status === "renewal").length,
     churn: events.filter((item) => item.status === "churn").length,
     failed: events.filter((item) => item.status === "failed").length,
+    unsubscribed: events.filter((item) => item.status === "unsubscribed").length,
+    unsubscribedUsers: await User.countDocuments({
+      unsubscribedAt: { $ne: null },
+      subscriptionStatus: { $ne: "active" },
+    }),
+    unsubscribedToday: await User.countDocuments({
+      unsubscribedAt: { $gte: startOfDay(new Date()) },
+    }),
     heStarted: events.filter((item) => item.status === "he-started").length,
     nheStarted: events.filter((item) => item.status === "nhe-started").length,
     totalGhsAmount: events.reduce((sum, item) => sum + Number(item.chargingAmount || 0), 0),
@@ -264,6 +285,104 @@ export const getAdminDashboard = async (req, res) => {
   } catch (err) {
     console.error("Admin dashboard error:", err);
     res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const getAdminUnsubscribers = async (req, res) => {
+  try {
+    const [users, webLogs, ghanaLogs] = await Promise.all([
+      User.find({
+        $or: [
+          { unsubscribedAt: { $ne: null } },
+          { tokenVersion: { $gte: 1 }, subscriptionStatus: { $ne: "active" } },
+        ],
+      })
+        .select(
+          "phone subscriptionStatus unsubscribedAt tokenVersion isPhoneVerified questionsPlayedToday lastUnsubscribe createdAt updatedAt"
+        )
+        .sort({ unsubscribedAt: -1, updatedAt: -1 })
+        .lean(),
+      MTNCallbackLog.find({ "rawResponse.operationId": "ACI" })
+        .sort({ createdAt: -1 })
+        .limit(500)
+        .lean(),
+      GhanaCallbackLog.find({
+        $or: [
+          { lifecycle: { $regex: "unsub", $options: "i" } },
+          { status: { $regex: "unsub", $options: "i" } },
+          { reason: { $regex: "unsubscrib", $options: "i" } },
+          { normalizedStatus: "unsubscribed" },
+        ],
+      })
+        .sort({ createdAt: -1 })
+        .limit(500)
+        .lean(),
+    ]);
+
+    const records = users.map((user) => {
+      const isActive = user.subscriptionStatus === "active";
+      return {
+        id: String(user._id),
+        msisdn: user.phone || "",
+        subscriptionStatus: user.subscriptionStatus || "inactive",
+        unsubscribed: !isActive,
+        unsubscribedAt: user.unsubscribedAt || null,
+        sessionFlushed: Number(user.tokenVersion || 0) > 0,
+        tokenVersion: Number(user.tokenVersion || 0),
+        isPhoneVerified: Boolean(user.isPhoneVerified),
+        questionsPlayedToday: Number(user.questionsPlayedToday || 0),
+        mtnStatus: user.lastUnsubscribe?.status || "",
+        mtnDescription: user.lastUnsubscribe?.description || "",
+        mtnStatusCode: user.lastUnsubscribe?.statusCode ?? "",
+        mtnSubscriptionId: user.lastUnsubscribe?.subscriptionId ?? "",
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
+    });
+
+    const history = [
+      ...webLogs.map((item) => ({
+        id: String(item._id),
+        msisdn: item.phone || "",
+        source: item.rawResponse?.source === "WEB" ? "Website" : "MTN ACI",
+        result: item.rawResponse?.result || item.resultMessage || "-",
+        description: item.rawResponse?.description || item.resultMessage || "-",
+        statusCode: item.rawResponse?.statusCode ?? item.resultCode ?? "",
+        status: "unsubscribed",
+        createdAt: item.createdAt,
+      })),
+      ...ghanaLogs.map((item) => ({
+        id: String(item._id),
+        msisdn: item.msisdn || "",
+        source: item.callbackType === "SDP" ? "SDP / Website" : "CGW Callback",
+        result: item.status || "-",
+        description: item.reason || "-",
+        statusCode: "",
+        status: item.normalizedStatus || "unsubscribed",
+        createdAt: item.createdAt,
+      })),
+    ].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+    const currentlyUnsubscribed = records.filter((item) => item.unsubscribed).length;
+
+    return res.json({
+      success: true,
+      summary: {
+        totalUsers: records.length,
+        currentlyUnsubscribed,
+        today: records.filter(
+          (item) =>
+            item.unsubscribedAt &&
+            new Date(item.unsubscribedAt) >= startOfDay(new Date())
+        ).length,
+        historyCount: history.length,
+      },
+      users: records,
+      history,
+    });
+  } catch (err) {
+    console.error("Admin unsubscribers error:", err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 

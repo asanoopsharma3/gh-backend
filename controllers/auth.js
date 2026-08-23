@@ -3,8 +3,12 @@ import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "30d" });
+const generateToken = (user) => {
+  return jwt.sign(
+    { id: user._id, tokenVersion: user.tokenVersion || 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: "30d" }
+  );
 };
 
 
@@ -29,7 +33,7 @@ export const registerUser = async (req, res) => {
     res.status(201).json({
       success: true,
       user: { _id: user._id, name: user.name, email: user.email, role: user.role },
-      token: generateToken(user._id),
+      token: generateToken(user),
     });
   } catch (error) {
     console.error("registerUser error:", error);
@@ -52,7 +56,7 @@ export const loginUser = async (req, res) => {
     res.json({
       success: true,
       user: { _id: user._id, name: user.name, email: user.email, role: user.role },
-      token: generateToken(user._id),
+      token: generateToken(user),
     });
   } catch (error) {
     console.error("loginUser error:", error);
@@ -143,7 +147,7 @@ export const updateMe = async (req, res) => {
     res.json({
       success: true,
       user: updatedUser,
-      token: generateToken(user._id),
+      token: generateToken(user),
     });
   } catch (error) {
     console.error("updateMe error:", error);

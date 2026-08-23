@@ -24,6 +24,16 @@ export const protect = async (req, res, next) => {
       });
     }
 
+    const tokenVersion = Number(decoded.tokenVersion ?? 0);
+    const currentVersion = Number(user.tokenVersion ?? 0);
+    if (tokenVersion !== currentVersion) {
+      return res.status(401).json({
+        success: false,
+        code: "TOKEN_REVOKED",
+        message: "Session expired. Please subscribe again.",
+      });
+    }
+
     req.user = user;
     return next();
   } catch (error) {

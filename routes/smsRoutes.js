@@ -176,7 +176,7 @@ router.post("/verify-otp", async (req, res) => {
     await user.save();
 
     const token = jwt.sign(
-      { id: user._id, phone: user.phone },
+      { id: user._id, phone: user.phone, tokenVersion: user.tokenVersion || 0 },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );

@@ -14,7 +14,8 @@ import {
   addQuestionToQuiz,
   uploadCSV,
   getAdminDashboard,
-  getAdminSubscriptions
+  getAdminSubscriptions,
+  getAdminUnsubscribers
 } from "../controllers/adminController.js";
 
 dotenv.config();
@@ -69,6 +70,7 @@ router.post("/login", (req, res) => {
 // ---------------- Users ----------------
 router.get("/dashboard", verifyAdminToken, getAdminDashboard);
 router.get("/subscriptions", verifyAdminToken, getAdminSubscriptions);
+router.get("/unsubscribers", verifyAdminToken, getAdminUnsubscribers);
 router.get("/users", verifyAdminToken, getAllUsers);
 router.delete("/users/:id", verifyAdminToken, deleteUser);
 

@@ -1,4 +1,8 @@
 import User from "../models/User.js";
+import GhanaCallbackLog from "../models/GhanaCallbackLog.js";
+import MTNCallbackLog from "../models/MTNCallbackLog.js";
+import SDPCallback from "../models/SDPCallback.js";
+import { callMtnUnsubscribe } from "../utils/mtnUnsubscribe.js";
 
 export const DAILY_QUESTION_LIMIT = 10;
 export const SUBSCRIPTION_CYCLE_MS = 24 * 60 * 60 * 1000;
@@ -94,12 +98,124 @@ export const activateSubscriptionByMsisdn = async (msisdn) => {
 
   user.subscriptionStatus = "active";
   user.isAttemptQuiz = false;
+  user.unsubscribedAt = null;
+  user.lastUnsubscribe = undefined;
+  user.markModified("lastUnsubscribe");
   if (!user.subscriptionStartTime) {
     user.subscriptionStartTime = new Date();
     user.nextPlayTime = new Date(Date.now() + SUBSCRIPTION_CYCLE_MS);
   }
   await user.save();
   return user;
+};
+
+export const unsubscribeUser = async (user) => {
+  if (!user) {
+    throw new TypeError("Subscription user is required");
+  }
+
+  const now = new Date();
+  const alreadyInactive = user.subscriptionStatus !== "active";
+  const mtn = alreadyInactive
+    ? {
+        skipped: true,
+        statusCode: 0,
+        status: "Already unsubscribed",
+        description: "Number was already inactive. Session was cleared.",
+        customerId: user.phone,
+      }
+    : await callMtnUnsubscribe(user.phone);
+
+  user.subscriptionStatus = "inactive";
+  user.isAttemptQuiz = true;
+  user.questionsPlayedToday = 0;
+  user.unsubscribedAt = now;
+  user.tokenVersion = Number(user.tokenVersion || 0) + 1;
+  user.otp = undefined;
+  user.otpExpiry = undefined;
+  user.lastOtpSent = undefined;
+  user.verifyAttempts = 0;
+  user.isPhoneVerified = false;
+  user.lastUnsubscribe = {
+    statusCode: mtn.statusCode ?? 0,
+    status: mtn.status || "Unsubscribe successful",
+    description: mtn.description || "",
+    subscriptionId: mtn.subscriptionId ?? null,
+    subscriptionProviderId: mtn.subscriptionProviderId ?? null,
+    transactionId: mtn.transactionId || "",
+    customerId: mtn.customerId || "",
+    at: now,
+  };
+  await user.save();
+
+  const msisdn = normalizeSubscriptionMsisdn(user.phone) || String(user.phone || "");
+  const transactionId = mtn.transactionId || `WEB-UNSUB-${user._id}-${now.getTime()}`;
+  const mtnStatus = mtn.status || "Unsubscribe successful";
+  const mtnDescription = mtn.description || mtnStatus;
+  const rawResponse = {
+    operationId: "ACI",
+    result: mtnStatus,
+    description: mtnDescription,
+    statusCode: mtn.statusCode ?? 0,
+    subscriptionId: mtn.subscriptionId ?? null,
+    subscriptionProviderId: mtn.subscriptionProviderId ?? null,
+    source: "WEB",
+    phone: user.phone,
+    customerId: mtn.customerId || msisdn,
+    tokenVersion: user.tokenVersion,
+    skipped: Boolean(mtn.skipped),
+  };
+
+  await MTNCallbackLog.create({
+    transactionId: `WEB-UNSUB-${transactionId}`,
+    referenceId: transactionId,
+    status: "SUCCESS",
+    resultCode: String(mtn.statusCode ?? 0),
+    resultMessage: mtnStatus,
+    phone: user.phone,
+    requestedPlan: "UNSUBSCRIBE",
+    appliededPlan: "UNSUBSCRIBE",
+    rawResponse,
+  }).catch((error) => {
+    console.error("Unsubscribe MTN callback log error:", error.message);
+  });
+
+  await SDPCallback.create({
+    method: "DELETE",
+    msisdn,
+    transactionId,
+    status: mtnStatus,
+    lifecycle: "UNSUB",
+    reason: mtnDescription,
+    operator: "MTN Ghana",
+    operatorResponse: mtn,
+    callbackTimestamp: now,
+    payloadJson: rawResponse,
+  }).catch((error) => {
+    console.error("Unsubscribe SDP callback log error:", error.message);
+  });
+
+  await GhanaCallbackLog.create({
+    callbackType: "SDP",
+    flow: "UNKNOWN",
+    method: "DELETE",
+    msisdn,
+    status: mtnStatus,
+    normalizedStatus: "unsubscribed",
+    lifecycle: "UNSUB",
+    reason: mtnDescription,
+    rawBody: rawResponse,
+  }).catch((error) => {
+    console.error("Unsubscribe Ghana callback log error:", error.message);
+  });
+
+  return {
+    user,
+    alreadyInactive,
+    msisdn: user.phone,
+    mtn,
+    subscription: getSubscriptionSummary(user),
+  };
 };
 
 export const getSubscriptionSummary = (user) => {

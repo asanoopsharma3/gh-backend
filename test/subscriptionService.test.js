@@ -71,3 +71,16 @@ test("inactive subscriptions never allow gameplay", () => {
   assert.equal(summary.canPlay, false);
   assert.equal(summary.questionsRemaining, DAILY_QUESTION_LIMIT);
 });
+
+test("unsubscribed users stay inactive until they subscribe again", () => {
+  const summary = getSubscriptionSummary({
+    subscriptionStatus: "inactive",
+    isAttemptQuiz: true,
+    questionsPlayedToday: 0,
+    unsubscribedAt: new Date(),
+  });
+
+  assert.equal(summary.subscriptionStatus, "inactive");
+  assert.equal(summary.canPlay, false);
+  assert.match(summary.message, /inactive/i);
+});
