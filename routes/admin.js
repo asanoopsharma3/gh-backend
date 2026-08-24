@@ -1,7 +1,6 @@
 // admin.js
 import express from "express";
 import jwt from "jsonwebtoken";
-import dotenv from "dotenv";
 import multer from "multer";
 import {
   getAllUsers,
@@ -18,7 +17,6 @@ import {
   getAdminUnsubscribers
 } from "../controllers/adminController.js";
 
-dotenv.config();
 const router = express.Router();
 const upload = multer({ dest: "uploads/" });
 

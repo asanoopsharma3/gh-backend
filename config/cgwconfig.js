@@ -1,7 +1,3 @@
-import dotenv from "dotenv";
-
-dotenv.config();
-
 export const ENV =
   process.env.CGW_ENV || (process.env.NODE_ENV === "production" ? "production" : "staging");
 

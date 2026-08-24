@@ -1,5 +1,5 @@
+import "./config/loadEnv.js";
 import express from "express";
-import dotenv from "dotenv";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -14,8 +14,6 @@ import mtnsearchnumberrouter from "./routes/mtnsearchbynuimber.js";
 import cgwRoutes from "./routes/cgwRoutes.js";
 import headerEnrichment from "./middleware/headerEnrichment.js";
 import { handleCGWCallback } from "./controllers/cgwController.js";
-
-dotenv.config();
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -62,6 +60,15 @@ app.use(
 );
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use((req, res, next) => {
+  const url = req.originalUrl || req.url || "";
+  if (url.includes("/api/subscription") || url.toLowerCase().includes("unsubscribe")) {
+    console.log(
+      `[unsubscribe] ${new Date().toISOString()} incoming ${req.method} ${url}`
+    );
+  }
+  next();
+});
 app.use(headerEnrichment);
 
 app.use("/api/auth", authRoutes);
@@ -120,6 +127,11 @@ app.use((error, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  console.log(
+    `[unsubscribe] ready provider=${process.env.MTN_SUBSCRIPTION_PROVIDER_ID || "-"} subscriptionId=${
+      process.env.MTN_SUBSCRIPTION_ID || process.env.CGW_INITIAL_OFFER_CODE || "-"
+    } skip=${process.env.MTN_UNSUBSCRIBE_SKIP || "false"}`
+  );
 });
 
 
