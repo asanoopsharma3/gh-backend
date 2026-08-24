@@ -23,7 +23,7 @@ export const getUnsubscribeSubscriptionProviderId = () =>
   String(process.env.MTN_SUBSCRIPTION_PROVIDER_ID || "").trim();
 
 export const getUnsubscribeApiKey = () =>
-  process.env.MTN_X_API_KEY || process.env.MTN_API_KEY || "";
+  String(process.env.MTN_X_API_KEY || process.env.MTN_CLIENT_ID || "").trim();
 
 export const toMtnCustomerId = (phone) => {
   const digits = String(phone || "").replace(/\D/g, "");
