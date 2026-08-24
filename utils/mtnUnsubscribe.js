@@ -280,9 +280,11 @@ export async function callMtnUnsubscribe(
     });
   }
 
-  const payload = response.data && typeof response.data === "object" ? response.data : response.data;
+  const payload = response.data;
   logUnsubscribe("mtn-delete-response", {
     httpStatus: response.status,
+    statusText: response.statusText,
+    contentType: response.headers?.["content-type"] || "",
     body: payload,
   });
   const mtn = {
