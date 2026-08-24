@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { protect } from "../middleware/authMiddleware.js";
 import { INITIAL_OFFER_CODE } from "../config/cgwconfig.js";
 import { MtnUnsubscribeError } from "../utils/mtnUnsubscribe.js";
+import { logUnsubscribe } from "../utils/unsubscribeLog.js";
 import {
   activateSubscriptionByMsisdn,
   getSubscriptionSummary,
@@ -53,9 +54,20 @@ router.post("/dev-activate", async (req, res) => {
 });
 
 router.post("/unsubscribe", protect, async (req, res) => {
+  logUnsubscribe("http-request", {
+    phone: req.user?.phone || "-",
+    subscriptionStatus: req.user?.subscriptionStatus || "-",
+    userId: String(req.user?._id || ""),
+  });
   try {
     const result = await unsubscribeUser(req.user);
     const mtn = result.mtn || {};
+    logUnsubscribe("http-success", {
+      phone: result.msisdn,
+      alreadyInactive: result.alreadyInactive,
+      mtnStatus: mtn.status,
+      mtnDescription: mtn.description,
+    });
     return res.json({
       success: true,
       message: mtn.status || "Unsubscribe successful",
@@ -65,8 +77,13 @@ router.post("/unsubscribe", protect, async (req, res) => {
       subscription: result.subscription,
     });
   } catch (error) {
+    logUnsubscribe("http-failed", {
+      message: error?.message || String(error),
+      name: error?.name,
+      mtn: error?.mtn || null,
+    });
     console.error("Unsubscribe error:", error);
-    if (error instanceof MtnUnsubscribeError) {
+    if (error instanceof MtnUnsubscribeError || error?.name === "MtnUnsubscribeError") {
       return res.status(error.statusCode || 502).json({
         success: false,
         message: error.message,
@@ -76,7 +93,7 @@ router.post("/unsubscribe", protect, async (req, res) => {
     }
     return res.status(500).json({
       success: false,
-      message: "Unable to unsubscribe right now. Please try again.",
+      message: error?.message || "Unable to unsubscribe right now. Please try again.",
     });
   }
 });

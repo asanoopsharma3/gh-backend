@@ -2,6 +2,7 @@ import axios from "axios";
 import { randomUUID } from "crypto";
 import { getMtnAccessToken } from "./mtn.js";
 import { INITIAL_OFFER_CODE } from "../config/cgwconfig.js";
+import { logUnsubscribe } from "./unsubscribeLog.js";
 
 const DEFAULT_UNSUBSCRIBE_BASE_URL = "https://api.mtn.com/v2/customers";
 
@@ -138,16 +139,23 @@ async function lookupSubscriptionProviderId({
   headers,
 }) {
   const configured = getUnsubscribeSubscriptionProviderId();
-  if (configured) return configured;
+  if (configured) {
+    logUnsubscribe("provider-from-env", { subscriptionProviderId: configured });
+    return configured;
+  }
+
+  const lookupUrl = buildMtnSubscriptionsUrl(customerId);
+  logUnsubscribe("provider-lookup-request", { method: "GET", url: lookupUrl });
 
   let response;
   try {
-    response = await axios.get(buildMtnSubscriptionsUrl(customerId), {
+    response = await axios.get(lookupUrl, {
       headers,
       timeout: 20000,
       validateStatus: () => true,
     });
   } catch (error) {
+    logUnsubscribe("provider-lookup-network-error", { error: error.message });
     throw new MtnUnsubscribeError("Unable to reach MTN subscription lookup API.", {
       statusCode: 502,
       mtn: { description: error.message, customerId, subscriptionId },
@@ -155,6 +163,10 @@ async function lookupSubscriptionProviderId({
   }
 
   const payload = response.data;
+  logUnsubscribe("provider-lookup-response", {
+    httpStatus: response.status,
+    body: payload,
+  });
   const providerId = extractProviderIdFromSubscriptions(payload, subscriptionId);
   if (providerId) return providerId;
 
@@ -181,16 +193,29 @@ export async function callMtnUnsubscribe(
   const txnId = transactionId || randomUUID();
 
   if (!customerId) {
+    logUnsubscribe("missing-customer-id", { phone });
     throw new MtnUnsubscribeError("Subscriber mobile number is missing for MTN unsubscribe.");
   }
 
   if (!offerId) {
+    logUnsubscribe("missing-subscription-id");
     throw new MtnUnsubscribeError("subscriptionId cannot be empty");
   }
+
+  logUnsubscribe("start", {
+    phone,
+    customerId,
+    subscriptionId: offerId,
+    transactionId: txnId,
+    subscriptionProviderId:
+      subscriptionProviderId || getUnsubscribeSubscriptionProviderId() || null,
+    skip: shouldSkipMtnUnsubscribe(),
+  });
 
   if (shouldSkipMtnUnsubscribe()) {
     const skippedProvider =
       String(subscriptionProviderId || getUnsubscribeSubscriptionProviderId() || "").trim();
+    logUnsubscribe("skipped-local-mode", { customerId, subscriptionId: offerId });
     return {
       skipped: true,
       customerId,
@@ -203,7 +228,16 @@ export async function callMtnUnsubscribe(
     };
   }
 
-  const token = await getMtnAccessToken();
+  let token;
+  try {
+    token = await getMtnAccessToken();
+  } catch (error) {
+    logUnsubscribe("token-failed", { error: error.message, customerId });
+    throw new MtnUnsubscribeError("Failed to get MTN access token", {
+      statusCode: 502,
+      mtn: { description: error.message, customerId, subscriptionId: offerId },
+    });
+  }
   const headers = buildMtnHeaders(token, txnId);
   const providerId = String(
     subscriptionProviderId ||
@@ -215,14 +249,20 @@ export async function callMtnUnsubscribe(
   ).trim();
 
   if (!providerId) {
+    logUnsubscribe("empty-provider-id", { customerId, subscriptionId: offerId });
     throw new MtnUnsubscribeError("subscriptionProviderId cannot be empty");
   }
 
   const url = buildMtnUnsubscribeUrl(customerId, offerId);
-  console.log(
-    "[MTN unsubscribe]",
-    `DELETE ${url}?subscriptionProviderId=${encodeURIComponent(providerId)}`
-  );
+  logUnsubscribe("mtn-delete-request", {
+    method: "DELETE",
+    url: `${url}?subscriptionProviderId=${encodeURIComponent(providerId)}`,
+    customerId,
+    subscriptionId: offerId,
+    subscriptionProviderId: providerId,
+    transactionId: txnId,
+    xApiKeySet: Boolean(getUnsubscribeApiKey()),
+  });
 
   let response;
   try {
@@ -233,6 +273,7 @@ export async function callMtnUnsubscribe(
       validateStatus: () => true,
     });
   } catch (error) {
+    logUnsubscribe("mtn-delete-network-error", { error: error.message, url });
     throw new MtnUnsubscribeError("Unable to reach MTN unsubscribe API.", {
       statusCode: 502,
       mtn: { description: error.message, customerId, subscriptionId: offerId, subscriptionProviderId: providerId },
@@ -240,6 +281,10 @@ export async function callMtnUnsubscribe(
   }
 
   const payload = response.data && typeof response.data === "object" ? response.data : response.data;
+  logUnsubscribe("mtn-delete-response", {
+    httpStatus: response.status,
+    body: payload,
+  });
   const mtn = {
     customerId,
     subscriptionId:
@@ -257,12 +302,14 @@ export async function callMtnUnsubscribe(
   };
 
   if (!isMtnUnsubscribeSuccess(payload && typeof payload === "object" ? payload : null, response.status)) {
+    logUnsubscribe("mtn-delete-failed", mtn);
     throw new MtnUnsubscribeError(
       mtn.status || mtn.description || "MTN unsubscribe failed.",
       { statusCode: 502, mtn }
     );
   }
 
+  logUnsubscribe("mtn-delete-success", mtn);
   return {
     skipped: false,
     ...mtn,

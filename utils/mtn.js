@@ -20,9 +20,12 @@ export async function getMtnAccessToken() {
       }
     );
 
+    console.log("[unsubscribe]", new Date().toISOString(), "mtn-token-ok");
     return response.data.access_token;
   } catch (err) {
-    console.error("❌ MTN Token Error:", err.response?.data || err.message);
+    const body = err.response?.data || err.message;
+    console.log("[unsubscribe]", new Date().toISOString(), "mtn-token-failed", body);
+    console.error("❌ MTN Token Error:", body);
     throw new Error("Failed to get MTN access token");
   }
 }

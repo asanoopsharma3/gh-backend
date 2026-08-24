@@ -13,6 +13,12 @@ module.exports = {
         NODE_ENV: "production",
         PORT: 3000,
       },
+      merge_logs: true,
+      time: true,
+      log_date_format: "YYYY-MM-DD HH:mm:ss.SSS",
+      out_file: "./logs/out.log",
+      error_file: "./logs/error.log",
+      log_file: "./logs/combined.log",
     },
   ],
 };

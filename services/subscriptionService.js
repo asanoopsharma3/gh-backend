@@ -3,6 +3,7 @@ import GhanaCallbackLog from "../models/GhanaCallbackLog.js";
 import MTNCallbackLog from "../models/MTNCallbackLog.js";
 import SDPCallback from "../models/SDPCallback.js";
 import { callMtnUnsubscribe } from "../utils/mtnUnsubscribe.js";
+import { logUnsubscribe } from "../utils/unsubscribeLog.js";
 
 export const DAILY_QUESTION_LIMIT = 10;
 export const SUBSCRIPTION_CYCLE_MS = 24 * 60 * 60 * 1000;
@@ -116,6 +117,9 @@ export const unsubscribeUser = async (user) => {
 
   const now = new Date();
   const alreadyInactive = user.subscriptionStatus !== "active";
+  if (alreadyInactive) {
+    logUnsubscribe("already-inactive", { phone: user.phone });
+  }
   const mtn = alreadyInactive
     ? {
         skipped: true,
