@@ -14,6 +14,7 @@ import mtnsearchnumberrouter from "./routes/mtnsearchbynuimber.js";
 import cgwRoutes from "./routes/cgwRoutes.js";
 import headerEnrichment from "./middleware/headerEnrichment.js";
 import { handleCGWCallback } from "./controllers/cgwController.js";
+import { logUnsubscribe } from "./utils/unsubscribeLog.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -63,9 +64,11 @@ app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
   const url = req.originalUrl || req.url || "";
   if (url.includes("/api/subscription") || url.toLowerCase().includes("unsubscribe")) {
-    console.log(
-      `[unsubscribe] ${new Date().toISOString()} incoming ${req.method} ${url}`
-    );
+    logUnsubscribe("incoming", {
+      method: req.method,
+      url,
+      hasAuth: Boolean(req.headers.authorization),
+    });
   }
   next();
 });
@@ -124,14 +127,17 @@ app.use((error, req, res, next) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+const PORT = Number(process.env.PORT || 5000);
+app.listen(PORT, "0.0.0.0", () => {
+  logUnsubscribe("ready", {
+    port: PORT,
+    pid: process.pid,
+    provider: process.env.MTN_SUBSCRIPTION_PROVIDER_ID || "-",
+    subscriptionId:
+      process.env.MTN_SUBSCRIPTION_ID || process.env.CGW_INITIAL_OFFER_CODE || "-",
+    skip: process.env.MTN_UNSUBSCRIBE_SKIP || "false",
+  });
   console.log(`Server running on http://localhost:${PORT}`);
-  console.log(
-    `[unsubscribe] ready provider=${process.env.MTN_SUBSCRIPTION_PROVIDER_ID || "-"} subscriptionId=${
-      process.env.MTN_SUBSCRIPTION_ID || process.env.CGW_INITIAL_OFFER_CODE || "-"
-    } skip=${process.env.MTN_UNSUBSCRIBE_SKIP || "false"}`
-  );
 });
 
 

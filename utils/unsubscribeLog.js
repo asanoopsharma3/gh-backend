@@ -17,13 +17,18 @@ export function logUnsubscribe(step, details = {}) {
     payload = ` ${String(details)}`;
   }
 
-  const line = `[unsubscribe] ${new Date().toISOString()} ${step}${payload}`;
-  console.log(line);
+  const line = `[unsubscribe] ${new Date().toISOString()} ${step}${payload}\n`;
 
   try {
     fs.mkdirSync(logDir, { recursive: true });
-    fs.appendFileSync(logFile, `${line}\n`);
+    fs.appendFileSync(logFile, line);
   } catch {
     // logging must never break unsubscribe
+  }
+
+  try {
+    process.stdout.write(line);
+  } catch {
+    console.log(line.trim());
   }
 }
