@@ -62,8 +62,15 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
-  const url = req.originalUrl || req.url || "";
-  if (url.includes("/api/subscription") || url.toLowerCase().includes("unsubscribe")) {
+  const url = String(req.originalUrl || req.url || "");
+  const shouldLog =
+    req.method !== "GET" ||
+    url.includes("/api/subscription") ||
+    url.toLowerCase().includes("unsubscribe") ||
+    url.includes("/api/sms") ||
+    url.includes("/api/auth");
+
+  if (url.startsWith("/api") && shouldLog) {
     logUnsubscribe("incoming", {
       method: req.method,
       url,

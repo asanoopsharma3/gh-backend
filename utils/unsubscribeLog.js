@@ -19,11 +19,18 @@ export function logUnsubscribe(step, details = {}) {
 
   const line = `[unsubscribe] ${new Date().toISOString()} ${step}${payload}\n`;
 
+  const extraFile = "/tmp/ghsuperwinnings-api.log";
+
   try {
     fs.mkdirSync(logDir, { recursive: true });
     fs.appendFileSync(logFile, line);
+    fs.appendFileSync(extraFile, line);
   } catch {
-    // logging must never break unsubscribe
+    try {
+      fs.appendFileSync(extraFile, line);
+    } catch {
+      // logging must never break unsubscribe
+    }
   }
 
   try {
