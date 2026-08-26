@@ -8,6 +8,7 @@ import {
   INITIAL_OFFER_CODE,
   OFFER_CODE,
   alignUrlToRequestProtocol,
+  toHttpUrl,
   generateCGWUrl,
   generateFixedHEUrl,
   mapCGWStatus,
@@ -142,8 +143,7 @@ const normalizeSdpStatus = (status = "", lifecycle = "", reason = "") => {
 export const startHeaderEnrichmentRedirect = async (req, res) => {
   try {
     const offerCode = req.query.offerCode || req.body?.offerCode || OFFER_CODE;
-    const redirectUrl = alignUrlToRequestProtocol(
-      req,
+    const redirectUrl = toHttpUrl(
       req.query.redirectUrl || req.body?.redirectUrl || HE_REDIRECT_URL
     );
     const mobileNumber =
@@ -180,14 +180,12 @@ export const generateCGWRedirectUrl = async (req, res) => {
     const msisdn = normalizeMsisdn(msisdnFromHeader || msisdnFromBody);
     const isHeaderEnrichment = Boolean(msisdnFromHeader);
     const offerCode = req.query?.offerCode || req.body?.offerCode || OFFER_CODE;
-    const redirectUrl = alignUrlToRequestProtocol(
-      req,
+    const redirectUrl = toHttpUrl(
       req.query?.redirectUrl || req.body?.redirectUrl || CALLBACK_URL
     );
 
     if (!msisdnFromHeader && !msisdnFromBody) {
-      const fallback = alignUrlToRequestProtocol(
-        req,
+      const fallback = toHttpUrl(
         `${FRONTEND_BASE_URL}/subscribe?fallback=true&offerCode=${offerCode}`
       );
       return res.redirect(302, fallback);
@@ -407,7 +405,7 @@ export const handleCGWCallback = async (req, res) => {
 
       return res.redirect(
         302,
-        alignUrlToRequestProtocol(req, `${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`)
+        toHttpUrl(`${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`)
       );
     }
 
@@ -419,7 +417,7 @@ export const handleCGWCallback = async (req, res) => {
 
     return res.redirect(
       302,
-      alignUrlToRequestProtocol(req, `${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`)
+      toHttpUrl(`${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`)
     );
   } catch (error) {
     console.error("CGW callback error:", error.message);
@@ -429,7 +427,7 @@ export const handleCGWCallback = async (req, res) => {
     });
     return res.redirect(
       302,
-      alignUrlToRequestProtocol(req, `${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`)
+      toHttpUrl(`${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`)
     );
   }
 };

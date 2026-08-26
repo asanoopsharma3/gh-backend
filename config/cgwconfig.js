@@ -46,6 +46,14 @@ export const getRequestProtocol = (req) => {
   return forwarded || req.protocol || "http";
 };
 
+export const toHttpUrl = (url) => {
+  const value = String(url || "").trim();
+  if (value.startsWith("https://")) {
+    return `http://${value.slice("https://".length)}`;
+  }
+  return value;
+};
+
 export const alignUrlToRequestProtocol = (req, url) => {
   const value = String(url || "").trim();
   if (!value) return value;
@@ -63,7 +71,7 @@ export const generateFixedHEUrl = ({
 } = {}) => {
   const params = new URLSearchParams({
     OfferCode: offerCode,
-    redirectUrl,
+    redirectUrl: toHttpUrl(redirectUrl),
     mobileNumber,
   });
 
@@ -81,7 +89,7 @@ export const generateCGWUrl = (
 
   const params = new URLSearchParams({
     OfferCode: offerCode,
-    redirectUrl,
+    redirectUrl: toHttpUrl(redirectUrl),
   });
 
   if (isHeaderEnrichment) {
