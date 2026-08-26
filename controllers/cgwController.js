@@ -7,6 +7,7 @@ import {
   HE_REDIRECT_URL,
   INITIAL_OFFER_CODE,
   OFFER_CODE,
+  alignUrlToRequestProtocol,
   generateCGWUrl,
   generateFixedHEUrl,
   mapCGWStatus,
@@ -141,7 +142,10 @@ const normalizeSdpStatus = (status = "", lifecycle = "", reason = "") => {
 export const startHeaderEnrichmentRedirect = async (req, res) => {
   try {
     const offerCode = req.query.offerCode || req.body?.offerCode || OFFER_CODE;
-    const redirectUrl = req.query.redirectUrl || req.body?.redirectUrl || HE_REDIRECT_URL;
+    const redirectUrl = alignUrlToRequestProtocol(
+      req,
+      req.query.redirectUrl || req.body?.redirectUrl || HE_REDIRECT_URL
+    );
     const mobileNumber =
       req.query.mobileNumber || req.body?.mobileNumber || HE_FIXED_MOBILE_NUMBER;
 
@@ -152,7 +156,9 @@ export const startHeaderEnrichmentRedirect = async (req, res) => {
       ...getClientMeta(req),
     }).catch(() => {});
 
-    return res.redirect(generateFixedHEUrl({ offerCode, redirectUrl, mobileNumber }));
+    const cgwUrl = generateFixedHEUrl({ offerCode, redirectUrl, mobileNumber });
+    console.log("[cgw] HE redirect", { protocol: req.protocol, redirectUrl, cgwUrl });
+    return res.redirect(302, cgwUrl);
   } catch (error) {
     console.error("HE redirect error:", error.message);
     return res.status(500).json({
@@ -174,10 +180,17 @@ export const generateCGWRedirectUrl = async (req, res) => {
     const msisdn = normalizeMsisdn(msisdnFromHeader || msisdnFromBody);
     const isHeaderEnrichment = Boolean(msisdnFromHeader);
     const offerCode = req.query?.offerCode || req.body?.offerCode || OFFER_CODE;
-    const redirectUrl = req.query?.redirectUrl || req.body?.redirectUrl || CALLBACK_URL;
+    const redirectUrl = alignUrlToRequestProtocol(
+      req,
+      req.query?.redirectUrl || req.body?.redirectUrl || CALLBACK_URL
+    );
 
     if (!msisdnFromHeader && !msisdnFromBody) {
-      return res.redirect(`${FRONTEND_BASE_URL}/subscribe?fallback=true&offerCode=${offerCode}`);
+      const fallback = alignUrlToRequestProtocol(
+        req,
+        `${FRONTEND_BASE_URL}/subscribe?fallback=true&offerCode=${offerCode}`
+      );
+      return res.redirect(302, fallback);
     }
 
     if (!msisdn || !msisdn.startsWith("233") || msisdn.length < 12) {
@@ -392,7 +405,10 @@ export const handleCGWCallback = async (req, res) => {
         offerCode,
       });
 
-      return res.redirect(`${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`);
+      return res.redirect(
+        302,
+        alignUrlToRequestProtocol(req, `${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`)
+      );
     }
 
     const params = new URLSearchParams({
@@ -401,13 +417,19 @@ export const handleCGWCallback = async (req, res) => {
       offerCode,
     });
 
-    return res.redirect(`${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`);
+    return res.redirect(
+      302,
+      alignUrlToRequestProtocol(req, `${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`)
+    );
   } catch (error) {
     console.error("CGW callback error:", error.message);
     const params = new URLSearchParams({
       subscribed: "false",
       reason: "Callback processing error",
     });
-    return res.redirect(`${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`);
+    return res.redirect(
+      302,
+      alignUrlToRequestProtocol(req, `${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`)
+    );
   }
 };

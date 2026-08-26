@@ -10,8 +10,12 @@ import { validateCallbackRequest } from "../middleware/validateCallbackRequest.j
 const router = express.Router();
 
 router.post("/activate", validateCallbackRequest, activateCGWSubscription);
+router.all("/he-redirect", startHeaderEnrichmentRedirect);
+router.all("/he", startHeaderEnrichmentRedirect);
+router.all("/redirect", generateCGWRedirectUrl);
 // CGW browser callbacks do not send the SDP shared secret.
 router.all("/callback", handleCGWCallback);
 
 export default router;
+
 

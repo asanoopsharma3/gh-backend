@@ -38,6 +38,24 @@ export const normalizeMsisdn = (value) => {
   return `233${digits}`;
 };
 
+export const getRequestProtocol = (req) => {
+  const forwarded = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  return forwarded || req.protocol || "http";
+};
+
+export const alignUrlToRequestProtocol = (req, url) => {
+  const value = String(url || "").trim();
+  if (!value) return value;
+  const protocol = getRequestProtocol(req);
+  if (protocol === "http" && value.startsWith("https://")) {
+    return `http://${value.slice("https://".length)}`;
+  }
+  return value;
+};
+
 export const generateFixedHEUrl = ({
   offerCode = OFFER_CODE,
   redirectUrl = HE_REDIRECT_URL,
