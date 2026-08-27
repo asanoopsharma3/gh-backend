@@ -13,7 +13,11 @@ import mtnpaymentrouter from "./routes/mtnpayementStatusRoutes.js";
 import mtnsearchnumberrouter from "./routes/mtnsearchbynuimber.js";
 import cgwRoutes from "./routes/cgwRoutes.js";
 import headerEnrichment from "./middleware/headerEnrichment.js";
-import { handleCGWCallback } from "./controllers/cgwController.js";
+import {
+  generateCGWRedirectUrl,
+  handleCGWCallback,
+  startHeaderEnrichmentRedirect,
+} from "./controllers/cgwController.js";
 import { logUnsubscribe } from "./utils/unsubscribeLog.js";
 
 const app = express();
@@ -31,6 +35,8 @@ const staticAllowedOrigins = [
   "https://www.ghsuperwinnings.com",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5174",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   ...(process.env.CORS_ALLOWED_ORIGINS || "")
@@ -88,6 +94,11 @@ app.use("/api/subscription", subscriptionAccessRoutes);
 app.use("/api/mtn/payment", mtnpaymentrouter);
 app.use("/api/mtn/details", mtnsearchnumberrouter);
 app.all("/api/callback", handleCGWCallback);
+app.all("/api/cgw/he-redirect", startHeaderEnrichmentRedirect);
+app.all("/api/cgw/he", startHeaderEnrichmentRedirect);
+app.all("/api/cgw/redirect", generateCGWRedirectUrl);
+app.all("/cgw/he-redirect", startHeaderEnrichmentRedirect);
+app.all("/cgw/redirect", generateCGWRedirectUrl);
 app.use("/api/cgw", cgwRoutes);
 app.use("/cgw", cgwRoutes);
 app.use("/api/admin", adminRoutes);

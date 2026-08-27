@@ -2,6 +2,9 @@ const getHeaderMsisdn = (req) =>
   req.headers.msisdn ||
   req.headers["x-msisdn"] ||
   req.headers["x-up-calling-line-id"] ||
+  req.headers["x-forwarded-msisdn"] ||
+  req.headers["x-nokia-msisdn"] ||
+  req.headers["x-mdn"] ||
   null;
 
 const headerEnrichment = (req, res, next) => {

@@ -12,9 +12,9 @@ export const HE_FIXED_MOBILE_NUMBER =
   "99999999999";
 
 const defaultHeBaseUrl =
-  process.env.CGW_HE_BASE_URL || "https://cgw.mtn.com.gh/cgw-web/cgw/redirect/he";
+  process.env.CGW_HE_BASE_URL || "http://cg.mtn.com.gh/Portal";
 const defaultNonHeBaseUrl =
-  process.env.CGW_NON_HE_BASE_URL || "https://cgw.mtn.com.gh/cgw-web/cgw/redirect/nhe";
+  process.env.CGW_NON_HE_BASE_URL || "https://cg.mtn.com.gh/Portal";
 
 export const CGW_CONFIG = {
   staging: {
@@ -27,8 +27,19 @@ export const CGW_CONFIG = {
   },
 };
 
+export const isDummyHeMsisdn = (value) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return false;
+  const national = digits.startsWith("233")
+    ? digits.slice(3)
+    : digits.startsWith("0")
+      ? digits.slice(1)
+      : digits;
+  return national.length >= 9 && /^9+$/.test(national);
+};
+
 export const normalizeMsisdn = (value) => {
-  if (!value) return null;
+  if (!value || isDummyHeMsisdn(value)) return null;
 
   const digits = String(value).replace(/\D/g, "");
   if (!digits) return null;
@@ -38,12 +49,67 @@ export const normalizeMsisdn = (value) => {
   return `233${digits}`;
 };
 
+export const isRealGhanaMsisdn = (value) => {
+  const digits = normalizeMsisdn(value);
+  return Boolean(digits && digits.startsWith("233") && digits.length === 12);
+};
+
+const MSISDN_HEADER_KEYS = [
+  "msisdn",
+  "x-msisdn",
+  "x-up-calling-line-id",
+  "x-forwarded-msisdn",
+  "x-nokia-msisdn",
+  "x-mdn",
+  "x-ht-msisdn",
+];
+
+export const extractHeaderMsisdn = (req) => {
+  if (isRealGhanaMsisdn(req.msisdn)) {
+    return normalizeMsisdn(req.msisdn);
+  }
+
+  const headers = req.headers || {};
+  for (const key of MSISDN_HEADER_KEYS) {
+    const raw = headers[key];
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    if (isRealGhanaMsisdn(value)) {
+      return normalizeMsisdn(value);
+    }
+  }
+
+  return null;
+};
+
 export const getRequestProtocol = (req) => {
   const forwarded = String(req.headers["x-forwarded-proto"] || "")
     .split(",")[0]
     .trim()
     .toLowerCase();
   return forwarded || req.protocol || "http";
+};
+
+export const getFrontendBaseFromRequest = (req) => {
+  const originFrom = (raw) => {
+    try {
+      const origin = new URL(String(raw || "")).origin;
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+        return origin;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  };
+
+  return (
+    originFrom(req.query?.frontendBase) ||
+    originFrom(req.headers.origin) ||
+    originFrom(req.headers.referer) ||
+    (process.env.NODE_ENV !== "production"
+      ? process.env.LOCAL_FRONTEND_URL || "http://localhost:5173"
+      : FRONTEND_BASE_URL)
+  );
 };
 
 export const toHttpUrl = (url) => {
@@ -67,13 +133,19 @@ export const alignUrlToRequestProtocol = (req, url) => {
 export const generateFixedHEUrl = ({
   offerCode = OFFER_CODE,
   redirectUrl = HE_REDIRECT_URL,
-  mobileNumber = HE_FIXED_MOBILE_NUMBER,
+  mobileNumber,
 } = {}) => {
   const params = new URLSearchParams({
     OfferCode: offerCode,
     redirectUrl: toHttpUrl(redirectUrl),
-    mobileNumber,
   });
+
+  const realMsisdn = isRealGhanaMsisdn(mobileNumber)
+    ? normalizeMsisdn(mobileNumber)
+    : null;
+  if (realMsisdn) {
+    params.set("mobileNumber", realMsisdn);
+  }
 
   return `${CGW_CONFIG[ENV].he.baseUrl}?${params.toString()}`;
 };
@@ -92,12 +164,9 @@ export const generateCGWUrl = (
     redirectUrl: toHttpUrl(redirectUrl),
   });
 
-  if (isHeaderEnrichment) {
-    params.append("mobileNumber", msisdn || HE_FIXED_MOBILE_NUMBER);
-  }
-
-  if (!isHeaderEnrichment && msisdn) {
-    params.append("mobileNumber", msisdn);
+  const realMsisdn = isRealGhanaMsisdn(msisdn) ? normalizeMsisdn(msisdn) : null;
+  if (realMsisdn) {
+    params.append("mobileNumber", realMsisdn);
   }
 
   return `${baseUrl}?${params.toString()}`;
