@@ -1,9 +1,19 @@
+export const toHttpUrl = (url) => {
+  const value = String(url || "").trim();
+  if (value.startsWith("https://")) {
+    return `http://${value.slice("https://".length)}`;
+  }
+  return value;
+};
+
 export const ENV =
   process.env.CGW_ENV || (process.env.NODE_ENV === "production" ? "production" : "staging");
 
 export const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "http://localhost:5174";
-export const CALLBACK_URL = process.env.CGW_CALLBACK_URL || `${FRONTEND_BASE_URL}/api/callback`;
-export const HE_REDIRECT_URL = process.env.CGW_HE_REDIRECT_URL || CALLBACK_URL;
+export const CALLBACK_URL = toHttpUrl(
+  process.env.CGW_CALLBACK_URL || `${FRONTEND_BASE_URL}/api/callback`
+);
+export const HE_REDIRECT_URL = toHttpUrl(process.env.CGW_HE_REDIRECT_URL || CALLBACK_URL);
 export const OFFER_CODE = process.env.CGW_OFFER_CODE || "9923310010";
 export const INITIAL_OFFER_CODE = process.env.CGW_INITIAL_OFFER_CODE || OFFER_CODE;
 export const HE_FIXED_MOBILE_NUMBER =
@@ -11,8 +21,9 @@ export const HE_FIXED_MOBILE_NUMBER =
   process.env.CGW_HE_FIXED_MOBILE_NUMBER ||
   "99999999999";
 
-const defaultHeBaseUrl =
-  process.env.CGW_HE_BASE_URL || "http://cg.mtn.com.gh/Portal";
+const defaultHeBaseUrl = toHttpUrl(
+  process.env.CGW_HE_BASE_URL || "http://cg.mtn.com.gh/Portal"
+);
 const defaultNonHeBaseUrl =
   process.env.CGW_NON_HE_BASE_URL || "https://cg.mtn.com.gh/Portal";
 
@@ -124,14 +135,6 @@ export const getFrontendBaseFromRequest = (req) => {
   );
 };
 
-export const toHttpUrl = (url) => {
-  const value = String(url || "").trim();
-  if (value.startsWith("https://")) {
-    return `http://${value.slice("https://".length)}`;
-  }
-  return value;
-};
-
 export const alignUrlToRequestProtocol = (req, url) => {
   const value = String(url || "").trim();
   if (!value) return value;
@@ -159,7 +162,7 @@ export const generateFixedHEUrl = ({
     params.set("mobileNumber", realMsisdn);
   }
 
-  return `${CGW_CONFIG[ENV].he.baseUrl}?${params.toString()}`;
+  return `${toHttpUrl(CGW_CONFIG[ENV].he.baseUrl)}?${params.toString()}`;
 };
 
 export const generateCGWUrl = (
@@ -169,7 +172,9 @@ export const generateCGWUrl = (
   redirectUrl = CALLBACK_URL
 ) => {
   const config = CGW_CONFIG[ENV];
-  const baseUrl = isHeaderEnrichment ? config.he.baseUrl : config.nonHe.baseUrl;
+  const baseUrl = isHeaderEnrichment
+    ? toHttpUrl(config.he.baseUrl)
+    : config.nonHe.baseUrl;
 
   const params = new URLSearchParams({
     OfferCode: offerCode,

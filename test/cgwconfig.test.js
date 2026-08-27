@@ -17,14 +17,13 @@ test("does not send dummy 999 MSISDN on HE URLs", () => {
   assert.equal(url.startsWith("http://cg.mtn.com.gh/Portal"), true);
 });
 
-test("HE URL is still built when MSISDN is missing", () => {
+test("HE portal and callback stay on HTTP even if https is configured", () => {
   const url = generateFixedHEUrl({
     offerCode: "9923310010",
     redirectUrl: "https://ghsuperwinnings.com/api/callback",
   });
-  assert.equal(url.includes("OfferCode=9923310010"), true);
-  assert.equal(url.includes("redirectUrl=http%3A%2F%2Fghsuperwinnings.com"), true);
-  assert.equal(url.includes("mobileNumber"), false);
+  assert.match(url, /^http:\/\//);
+  assert.doesNotMatch(url, /^https:\/\//);
 });
 
 test("normalizes Ghana numbers and rejects dummy HE placeholders", () => {

@@ -166,7 +166,7 @@ export const startHeaderEnrichmentRedirect = async (req, res) => {
       redirectUrl,
       cgwUrl,
     });
-    return res.redirect(302, cgwUrl);
+    return res.redirect(302, toHttpUrl(cgwUrl));
   } catch (error) {
     console.error("HE redirect error:", error.message);
     return res.status(500).json({
