@@ -14,7 +14,6 @@ import mtnsearchnumberrouter from "./routes/mtnsearchbynuimber.js";
 import cgwRoutes from "./routes/cgwRoutes.js";
 import headerEnrichment from "./middleware/headerEnrichment.js";
 import { handleCGWCallback } from "./controllers/cgwController.js";
-import { startHeaderEnrichmentRedirect } from "./controllers/cgwController.js";
 import { logUnsubscribe } from "./utils/unsubscribeLog.js";
 
 const app = express();
@@ -89,9 +88,6 @@ app.use("/api/subscription", subscriptionAccessRoutes);
 app.use("/api/mtn/payment", mtnpaymentrouter);
 app.use("/api/mtn/details", mtnsearchnumberrouter);
 app.all("/api/callback", handleCGWCallback);
-app.get("/api/cgw/he-redirect", startHeaderEnrichmentRedirect);
-app.post("/api/cgw/he-redirect", startHeaderEnrichmentRedirect);
-app.head("/api/cgw/he-redirect", startHeaderEnrichmentRedirect);
 app.use("/api/cgw", cgwRoutes);
 app.use("/cgw", cgwRoutes);
 app.use("/api/admin", adminRoutes);
