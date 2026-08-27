@@ -14,8 +14,8 @@ export const HE_FIXED_MOBILE_NUMBER =
 const defaultHeBaseUrl =
   process.env.CGW_HE_BASE_URL ||
   (ENV === "staging"
-    ? "https://sitcg.mtn.com.gh/Portal"
-    : "https://cg.mtn.com.gh/Portal");
+    ? "http://sitcg.mtn.com.gh/Portal"
+    : "http://cg.mtn.com.gh/Portal");
 const defaultNonHeBaseUrl =
   process.env.CGW_NON_HE_BASE_URL || defaultHeBaseUrl;
 
