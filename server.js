@@ -50,6 +50,17 @@ const isLocalDevOrigin = (origin) =>
   /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
 
 app.set("trust proxy", 1);
+
+const handleHeRedirect = (req, res, next) =>
+  startHeaderEnrichmentRedirect(req, res, next);
+
+["get", "head", "post"].forEach((method) => {
+  app[method]("/api/cgw/he-redirect", handleHeRedirect);
+  app[method]("/cgw/he-redirect", handleHeRedirect);
+  app[method]("/he-redirect", handleHeRedirect);
+  app[method]("/api/he-redirect", handleHeRedirect);
+});
+
 app.use(
   cors({
     origin(origin, callback) {
@@ -62,7 +73,7 @@ app.use(
       callback(null, false);
     },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
@@ -113,6 +124,7 @@ app.get("/api/health", (req, res) => {
   res.json({
     success: true,
     service: "ghsuperwinnings-api",
+    heRedirect: true,
     timestamp: new Date().toISOString(),
   });
 });

@@ -5,7 +5,7 @@ const normalizePath = (value) =>
     .toLowerCase() || "/";
 
 export const isHeRedirectPath = (value) =>
-  /(?:^|\/)(?:api\/)?(?:cgw\/)?he-redirect$/.test(normalizePath(value));
+  normalizePath(value).includes("he-redirect");
 
 export const isHeRedirectRequest = (req) =>
   [req.path, req.originalUrl, req.url].some(isHeRedirectPath);
