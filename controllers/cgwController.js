@@ -155,6 +155,13 @@ export const startHeaderEnrichmentRedirect = async (req, res) => {
       ...getClientMeta(req),
     }).catch(() => {});
 
+    if (!mobileNumber) {
+      const fallback = toHttpUrl(
+        `${FRONTEND_BASE_URL}/subscribe?fallback=true&offerCode=${encodeURIComponent(offerCode)}`
+      );
+      return res.redirect(302, fallback);
+    }
+
     const cgwUrl = generateFixedHEUrl({ offerCode, redirectUrl, mobileNumber });
     console.log("[cgw] HE redirect", {
       protocol: req.protocol,
