@@ -1,11 +1,24 @@
-const getHeaderMsisdn = (req) =>
-  req.headers.msisdn ||
-  req.headers["x-msisdn"] ||
-  req.headers["x-up-calling-line-id"] ||
-  req.headers["x-forwarded-msisdn"] ||
-  req.headers["x-nokia-msisdn"] ||
-  req.headers["x-mdn"] ||
-  null;
+const MSISDN_HEADER_KEYS = [
+  "msisdn",
+  "x-msisdn",
+  "x-up-calling-line-id",
+  "x-forwarded-msisdn",
+  "x-nokia-msisdn",
+  "x-mdn",
+  "x-ht-msisdn",
+  "x-up-subno",
+  "x-subscriber",
+];
+
+const getHeaderMsisdn = (req) => {
+  const headers = req.headers || {};
+  for (const key of MSISDN_HEADER_KEYS) {
+    const raw = headers[key];
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    if (value) return value;
+  }
+  return null;
+};
 
 const headerEnrichment = (req, res, next) => {
   const msisdn = getHeaderMsisdn(req);

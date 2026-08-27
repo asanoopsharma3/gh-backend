@@ -19,6 +19,7 @@ import {
   startHeaderEnrichmentRedirect,
 } from "./controllers/cgwController.js";
 import { logUnsubscribe } from "./utils/unsubscribeLog.js";
+import { isHeRedirectRequest } from "./utils/heRedirectPath.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -87,6 +88,11 @@ app.use((req, res, next) => {
 });
 app.use(headerEnrichment);
 
+app.use((req, res, next) => {
+  if (!isHeRedirectRequest(req)) return next();
+  return startHeaderEnrichmentRedirect(req, res, next);
+});
+
 app.use("/api/auth", authRoutes);
 app.use("/api/quiz", quizRouter);
 app.use("/api/sms", smsRoutes);
@@ -94,14 +100,9 @@ app.use("/api/subscription", subscriptionAccessRoutes);
 app.use("/api/mtn/payment", mtnpaymentrouter);
 app.use("/api/mtn/details", mtnsearchnumberrouter);
 app.all("/api/callback", handleCGWCallback);
-app.get("/api/cgw/he-redirect", startHeaderEnrichmentRedirect);
-app.head("/api/cgw/he-redirect", startHeaderEnrichmentRedirect);
-app.post("/api/cgw/he-redirect", startHeaderEnrichmentRedirect);
-app.all("/api/cgw/he-redirect", startHeaderEnrichmentRedirect);
-app.all("/api/cgw/he", startHeaderEnrichmentRedirect);
+app.get("/api/cgw/he", startHeaderEnrichmentRedirect);
 app.get("/api/cgw/redirect", generateCGWRedirectUrl);
 app.all("/api/cgw/redirect", generateCGWRedirectUrl);
-app.all("/cgw/he-redirect", startHeaderEnrichmentRedirect);
 app.all("/cgw/redirect", generateCGWRedirectUrl);
 app.use("/api/cgw", cgwRoutes);
 app.use("/cgw", cgwRoutes);

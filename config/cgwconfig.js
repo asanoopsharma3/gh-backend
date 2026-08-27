@@ -62,6 +62,8 @@ const MSISDN_HEADER_KEYS = [
   "x-nokia-msisdn",
   "x-mdn",
   "x-ht-msisdn",
+  "x-up-subno",
+  "x-subscriber",
 ];
 
 export const extractHeaderMsisdn = (req) => {

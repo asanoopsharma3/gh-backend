@@ -182,6 +182,11 @@ export const startHeaderEnrichmentRedirect = async (req, res) => {
 
 export const generateCGWRedirectUrl = async (req, res) => {
   try {
+    const flow = String(req.query?.flow || req.body?.flow || "").toUpperCase();
+    if (flow === "HE") {
+      return startHeaderEnrichmentRedirect(req, res);
+    }
+
     const msisdnFromHeader = getRequestMsisdn(req);
     const msisdnFromBody =
       req.body?.msisdn ||

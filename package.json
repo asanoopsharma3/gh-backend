@@ -4,7 +4,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "node --test test/subscriptionService.test.js test/mtnUnsubscribe.test.js",
+    "test": "node --test test/subscriptionService.test.js test/mtnUnsubscribe.test.js test/heRedirectPath.test.js",
     "migrate:subscription-only": "node scripts/migrateSubscriptionOnly.js",
     "start": "node server.js",
     "dev": "nodemon server.js"
