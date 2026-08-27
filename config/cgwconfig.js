@@ -43,10 +43,13 @@ export const normalizeMsisdn = (value) => {
 
   const digits = String(value).replace(/\D/g, "");
   if (!digits) return null;
-  if (digits.startsWith("233")) return digits;
-  if (digits.startsWith("0")) return `233${digits.slice(1)}`;
+  if (digits.startsWith("2330") && digits.length === 13) return `233${digits.slice(4)}`;
+  if (digits.startsWith("233") && digits.length === 12) return digits;
+  if (digits.startsWith("233") && digits.length > 12) return digits.slice(0, 12);
+  if (digits.startsWith("0") && digits.length === 10) return `233${digits.slice(1)}`;
+  if (digits.length === 9) return `233${digits}`;
 
-  return `233${digits}`;
+  return null;
 };
 
 export const isRealGhanaMsisdn = (value) => {
@@ -67,14 +70,21 @@ const MSISDN_HEADER_KEYS = [
 ];
 
 export const extractHeaderMsisdn = (req) => {
-  if (isRealGhanaMsisdn(req.msisdn)) {
-    return normalizeMsisdn(req.msisdn);
-  }
-
   const headers = req.headers || {};
+  const candidates = [req.msisdn];
+
   for (const key of MSISDN_HEADER_KEYS) {
     const raw = headers[key];
-    const value = Array.isArray(raw) ? raw[0] : raw;
+    candidates.push(Array.isArray(raw) ? raw[0] : raw);
+  }
+
+  for (const [key, raw] of Object.entries(headers)) {
+    if (/msisdn|mdn|calling-line|subno|subscriber/i.test(key)) {
+      candidates.push(Array.isArray(raw) ? raw[0] : raw);
+    }
+  }
+
+  for (const value of candidates) {
     if (isRealGhanaMsisdn(value)) {
       return normalizeMsisdn(value);
     }

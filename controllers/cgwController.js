@@ -157,14 +157,11 @@ export const startHeaderEnrichmentRedirect = async (req, res) => {
       ...getClientMeta(req),
     }).catch(() => {});
 
-    if (!mobileNumber) {
-      const fallback = `${getFrontendBaseFromRequest(req)}/subscribe?fallback=true`;
-      return res.redirect(302, fallback);
-    }
-
+    // Operator injects MSISDN on the CGW HTTP portal, not always on our HTTPS hop.
     const cgwUrl = generateFixedHEUrl({ offerCode, redirectUrl, mobileNumber });
     console.log("[cgw] HE redirect", {
       protocol: req.protocol,
+      forwardedProto: req.headers["x-forwarded-proto"],
       hasHeaderMsisdn: Boolean(headerMsisdn),
       redirectUrl,
       cgwUrl,
