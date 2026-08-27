@@ -158,7 +158,7 @@ export const startHeaderEnrichmentRedirect = async (req, res) => {
     }).catch(() => {});
 
     if (!mobileNumber) {
-      const fallback = `${getFrontendBaseFromRequest(req)}/subscribe?fallback=true&offerCode=${encodeURIComponent(offerCode)}`;
+      const fallback = `${getFrontendBaseFromRequest(req)}/subscribe?fallback=true`;
       return res.redirect(302, fallback);
     }
 
@@ -196,7 +196,7 @@ export const generateCGWRedirectUrl = async (req, res) => {
     );
 
     if (!msisdn) {
-      const fallback = `${getFrontendBaseFromRequest(req)}/subscribe?fallback=true&offerCode=${encodeURIComponent(offerCode)}`;
+      const fallback = `${getFrontendBaseFromRequest(req)}/subscribe?fallback=true`;
       return res.redirect(302, fallback);
     }
 
