@@ -3,17 +3,17 @@ import User from "../models/User.js";
 import {
   CALLBACK_URL,
   FRONTEND_BASE_URL,
+  HE_FIXED_MOBILE_NUMBER,
   HE_REDIRECT_URL,
   INITIAL_OFFER_CODE,
   OFFER_CODE,
-  extractHeaderMsisdn,
+  alignUrlToRequestProtocol,
+  toHttpUrl,
   generateCGWUrl,
   generateFixedHEUrl,
-  isRealGhanaMsisdn,
   mapCGWStatus,
   normalizeMsisdn,
   parseCGWCallback,
-  toHttpUrl,
 } from "../config/cgwconfig.js";
 import { SUBSCRIPTION_CYCLE_MS } from "../services/subscriptionService.js";
 import CGWCallbackLog from "../models/CGWCallbackLog.js";
@@ -30,7 +30,11 @@ const createToken = (user) =>
     { expiresIn: "30d" }
   );
 
-const getRequestMsisdn = (req) => extractHeaderMsisdn(req);
+const getRequestMsisdn = (req) =>
+  req.msisdn ||
+  req.headers.msisdn ||
+  req.headers["x-msisdn"] ||
+  req.headers["x-up-calling-line-id"];
 
 const getClientMeta = (req) => ({
   ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress,
@@ -142,33 +146,18 @@ export const startHeaderEnrichmentRedirect = async (req, res) => {
     const redirectUrl = toHttpUrl(
       req.query.redirectUrl || req.body?.redirectUrl || HE_REDIRECT_URL
     );
-    const headerMsisdn = extractHeaderMsisdn(req);
-    const bodyMsisdn = normalizeMsisdn(
-      req.query.mobileNumber || req.body?.mobileNumber
-    );
-    const mobileNumber = headerMsisdn || (isRealGhanaMsisdn(bodyMsisdn) ? bodyMsisdn : null);
+    const mobileNumber =
+      req.query.mobileNumber || req.body?.mobileNumber || HE_FIXED_MOBILE_NUMBER;
 
     await MsisdnLog.create({
-      msisdn: mobileNumber || "HE_NO_MSISDN",
-      source: headerMsisdn ? "HE_REDIRECT" : "HE_REDIRECT_NO_HEADER",
+      msisdn: mobileNumber,
+      source: "HE_REDIRECT",
       offerCode,
       ...getClientMeta(req),
     }).catch(() => {});
 
-    if (!mobileNumber) {
-      const fallback = toHttpUrl(
-        `${FRONTEND_BASE_URL}/subscribe?fallback=true&offerCode=${encodeURIComponent(offerCode)}`
-      );
-      return res.redirect(302, fallback);
-    }
-
     const cgwUrl = generateFixedHEUrl({ offerCode, redirectUrl, mobileNumber });
-    console.log("[cgw] HE redirect", {
-      protocol: req.protocol,
-      hasHeaderMsisdn: Boolean(headerMsisdn),
-      redirectUrl,
-      cgwUrl,
-    });
+    console.log("[cgw] HE redirect", { protocol: req.protocol, redirectUrl, cgwUrl });
     return res.redirect(302, cgwUrl);
   } catch (error) {
     console.error("HE redirect error:", error.message);
@@ -398,10 +387,7 @@ export const handleCGWCallback = async (req, res) => {
     }
 
 
-    if (
-      callbackData.msisdn &&
-      (statusMapping?.success || isSdpSuccessStatus(callbackData.status))
-    ) {
+    if (statusMapping.success) {
       const user = await applySubscriptionStatus(
         callbackData.msisdn,
         callbackData.status,

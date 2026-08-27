@@ -16,9 +16,6 @@ router.head("/he-redirect", startHeaderEnrichmentRedirect);
 router.all("/he-redirect", startHeaderEnrichmentRedirect);
 router.get("/he", startHeaderEnrichmentRedirect);
 router.all("/he", startHeaderEnrichmentRedirect);
-router.get("/redirect", generateCGWRedirectUrl);
-router.post("/redirect", generateCGWRedirectUrl);
-router.head("/redirect", generateCGWRedirectUrl);
 router.all("/redirect", generateCGWRedirectUrl);
 // CGW browser callbacks do not send the SDP shared secret.
 router.all("/callback", handleCGWCallback);
