@@ -30,6 +30,8 @@ const staticAllowedOrigins = [
   process.env.FRONTEND_BASE_URL,
   "https://ghsuperwinnings.com",
   "https://www.ghsuperwinnings.com",
+  "http://ghsuperwinnings.com",
+  "http://www.ghsuperwinnings.com",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:3000",
