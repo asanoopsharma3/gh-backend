@@ -12,9 +12,12 @@ export const HE_FIXED_MOBILE_NUMBER =
   "99999999999";
 
 const defaultHeBaseUrl =
-  process.env.CGW_HE_BASE_URL || "https://cgw.mtn.com.gh/cgw-web/cgw/redirect/he";
+  process.env.CGW_HE_BASE_URL ||
+  (ENV === "staging"
+    ? "https://sitcg.mtn.com.gh/Portal"
+    : "https://cg.mtn.com.gh/Portal");
 const defaultNonHeBaseUrl =
-  process.env.CGW_NON_HE_BASE_URL || "https://cgw.mtn.com.gh/cgw-web/cgw/redirect/nhe";
+  process.env.CGW_NON_HE_BASE_URL || defaultHeBaseUrl;
 
 export const CGW_CONFIG = {
   staging: {
@@ -152,6 +155,8 @@ export const mapCGWStatus = (statusCode) => {
     success: { subscriptionStatus: "active", success: true, message: "Success" },
     successful: { subscriptionStatus: "active", success: true, message: "Success" },
     succuss: { subscriptionStatus: "active", success: true, message: "Success" },
+    9: { subscriptionStatus: "active", success: true, message: "Success" },
+    115: { subscriptionStatus: "active", success: true, message: "Success" },
     1: { subscriptionStatus: "deactivated", success: false, message: "Activation failed" },
     112: { subscriptionStatus: "suspended", success: false, message: "Subscription in progress" },
     11: { subscriptionStatus: "deactivated", success: false, message: "No consent" },

@@ -387,7 +387,7 @@ export const handleCGWCallback = async (req, res) => {
     }
 
 
-    if (statusMapping.success) {
+    if (statusMapping.success || isSdpSuccessStatus(callbackData.status)) {
       const user = await applySubscriptionStatus(
         callbackData.msisdn,
         callbackData.status,
