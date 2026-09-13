@@ -117,6 +117,9 @@ export const parseCGWCallback = (payload) => ({
   cgid: firstDefinedValue(payload, ["cgid", "CGID", "cgId"]),
 });
 
+const mapStatusCodes = (codes, result) =>
+  Object.fromEntries(codes.flatMap((code) => [[code, result], [String(code).toLowerCase(), result]]));
+
 export const mapCGWStatus = (statusCode) => {
   const normalizedStatus = String(statusCode ?? "").trim().toLowerCase();
   const compactStatus = normalizedStatus.replace(/[\s_-]+/g, "");
@@ -130,32 +133,46 @@ export const mapCGWStatus = (statusCode) => {
     success: true,
     message: "Already subscribed",
   };
+  const lowBalanceResult = {
+    subscriptionStatus: "deactivated",
+    success: false,
+    message: "Low balance",
+  };
+  const invalidOtpResult = {
+    subscriptionStatus: "deactivated",
+    success: false,
+    message: "Invalid OTP",
+  };
 
+  // MTN Ghana CGW transition guide status codes
   const statusMap = {
-    200: successResult,
+    ...mapStatusCodes([200], successResult),
+    ...mapStatusCodes([9, 115], alreadySubscribedResult),
+    ...mapStatusCodes([1], { subscriptionStatus: "deactivated", success: false, message: "Activation failed" }),
+    ...mapStatusCodes([112], { subscriptionStatus: "suspended", success: false, message: "Subscription in progress" }),
+    ...mapStatusCodes([11], { subscriptionStatus: "deactivated", success: false, message: "No consent" }),
+    ...mapStatusCodes([12], { subscriptionStatus: "deactivated", success: false, message: "Invalid Consent" }),
+    ...mapStatusCodes([13], { subscriptionStatus: "deactivated", success: false, message: "Error consent" }),
+    ...mapStatusCodes([2, 63, 29, 26, 55, 111], lowBalanceResult),
+    ...mapStatusCodes([644], {
+      subscriptionStatus: "deactivated",
+      success: false,
+      message: "Failed duplicate subscription",
+    }),
+    ...mapStatusCodes([91, 186], invalidOtpResult),
     0: successResult,
     "00": successResult,
-    9: successResult,
-    201: alreadySubscribedResult,
     ok: successResult,
     active: successResult,
     activated: successResult,
     success: successResult,
     successful: successResult,
     succuss: successResult,
+    alreadysubscribedcase: alreadySubscribedResult,
     "already subscribed": alreadySubscribedResult,
     "already subscribe": alreadySubscribedResult,
     alreadysubscribed: alreadySubscribedResult,
     already_subscribed: alreadySubscribedResult,
-    1: { subscriptionStatus: "deactivated", success: false, message: "Activation failed" },
-    112: { subscriptionStatus: "suspended", success: false, message: "Subscription in progress" },
-    11: { subscriptionStatus: "deactivated", success: false, message: "No consent" },
-    12: { subscriptionStatus: "deactivated", success: false, message: "Invalid Consent" },
-    13: { subscriptionStatus: "deactivated", success: false, message: "Error consent" },
-    2: { subscriptionStatus: "deactivated", success: false, message: "Low balance" },
-    63: { subscriptionStatus: "deactivated", success: false, message: "Low balance" },
-    29: { subscriptionStatus: "deactivated", success: false, message: "Low balance" },
-    26: { subscriptionStatus: "deactivated", success: false, message: "Low balance" },
   };
 
   if (alreadySubscribed) {

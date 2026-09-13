@@ -47,8 +47,13 @@ const isSdpSuccessStatus = (status, lifecycle = "") => {
   const compactStatus = statusText.replace(/[\s_-]+/g, "");
   const lifecycleText = String(lifecycle || "").toLowerCase();
   if (lifecycleText.includes("unsub")) return false;
-  if (compactStatus.includes("alreadysubscrib")) return true;
-  return ["success", "successful", "active", "a", "200", "9", "115", "201"].includes(statusText);
+  if (
+    compactStatus.includes("alreadysubscrib") ||
+    compactStatus.includes("alreadysubscribedcase")
+  ) {
+    return true;
+  }
+  return ["success", "successful", "active", "a", "200", "9", "115"].includes(statusText);
 };
 
 const applySubscriptionStatus = async (msisdn, status, lifecycle = "", offerCode = "") => {
@@ -371,7 +376,7 @@ export const handleCGWCallback = async (req, res) => {
     }
 
 
-    if (statusMapping?.success) {
+    if (statusMapping?.success || isSdpSuccessStatus(callbackData.status)) {
       const user = await applySubscriptionStatus(
         callbackData.msisdn,
         callbackData.status,
