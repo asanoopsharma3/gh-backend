@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import connectDB from "./config/db.js";
@@ -84,7 +85,10 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-if (process.env.NODE_ENV === "production") {
+const indexHtmlPath = path.join(publicDirectory, "index.html");
+const hasFrontendBuild = fs.existsSync(indexHtmlPath);
+
+if (process.env.NODE_ENV === "production" && hasFrontendBuild) {
   app.use(
     express.static(publicDirectory, {
       maxAge: "1d",
@@ -98,7 +102,7 @@ if (process.env.NODE_ENV === "production") {
       !req.path.startsWith("/api/") &&
       req.accepts("html")
     ) {
-      return res.sendFile(path.join(publicDirectory, "index.html"));
+      return res.sendFile(indexHtmlPath);
     }
     return next();
   });
@@ -108,12 +112,19 @@ if (process.env.NODE_ENV === "production") {
   });
 }
 
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "Not found",
+  });
+});
+
 app.use((error, req, res, next) => {
   console.error("Unhandled request error:", error);
   if (res.headersSent) return next(error);
-  return res.status(500).json({
+  return res.status(error.statusCode || 500).json({
     success: false,
-    message: "Internal server error",
+    message: error.statusCode === 404 ? "Not found" : "Internal server error",
   });
 });
 
