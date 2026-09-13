@@ -54,7 +54,10 @@ const normalizeStatus = (status = "", reason = "", lifecycle = "") => {
   }
 
   if (lifecycleText.includes("ren") || reasonText.includes("renew")) return "renewal";
-  if (["success", "successful", "active", "a", "200", "9", "115"].includes(statusText)) {
+  if (
+    ["success", "successful", "active", "a", "200", "9", "115", "201"].includes(statusText) ||
+    (statusText.includes("already") && statusText.includes("subscrib"))
+  ) {
     return "success";
   }
   if (["failed", "failure", "fail", "deactivated", "d", "suspended", "s", "1", "11", "12", "13", "91", "150", "186", "644"].includes(statusText)) {

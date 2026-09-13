@@ -44,9 +44,11 @@ const detectFlow = (req) => {
 
 const isSdpSuccessStatus = (status, lifecycle = "") => {
   const statusText = String(status || "").toLowerCase();
+  const compactStatus = statusText.replace(/[\s_-]+/g, "");
   const lifecycleText = String(lifecycle || "").toLowerCase();
   if (lifecycleText.includes("unsub")) return false;
-  return ["success", "successful", "active", "a", "200", "9", "115"].includes(statusText);
+  if (compactStatus.includes("alreadysubscrib")) return true;
+  return ["success", "successful", "active", "a", "200", "9", "115", "201"].includes(statusText);
 };
 
 const applySubscriptionStatus = async (msisdn, status, lifecycle = "", offerCode = "") => {
@@ -369,7 +371,7 @@ export const handleCGWCallback = async (req, res) => {
     }
 
 
-    if (statusMapping.success) {
+    if (statusMapping?.success) {
       const user = await applySubscriptionStatus(
         callbackData.msisdn,
         callbackData.status,
@@ -390,7 +392,7 @@ export const handleCGWCallback = async (req, res) => {
 
     const params = new URLSearchParams({
       subscribed: "false",
-      reason: statusMapping.message,
+      reason: statusMapping?.message || "Activation failed",
       offerCode,
     });
 

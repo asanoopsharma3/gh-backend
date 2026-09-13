@@ -119,17 +119,34 @@ export const parseCGWCallback = (payload) => ({
 
 export const mapCGWStatus = (statusCode) => {
   const normalizedStatus = String(statusCode ?? "").trim().toLowerCase();
+  const compactStatus = normalizedStatus.replace(/[\s_-]+/g, "");
+  const alreadySubscribed =
+    compactStatus.includes("alreadysubscrib") ||
+    (normalizedStatus.includes("already") && normalizedStatus.includes("subscrib"));
+
+  const successResult = { subscriptionStatus: "active", success: true, message: "Success" };
+  const alreadySubscribedResult = {
+    subscriptionStatus: "active",
+    success: true,
+    message: "Already subscribed",
+  };
 
   const statusMap = {
-    200: { subscriptionStatus: "active", success: true, message: "Success" },
-    0: { subscriptionStatus: "active", success: true, message: "Success" },
-    "00": { subscriptionStatus: "active", success: true, message: "Success" },
-    ok: { subscriptionStatus: "active", success: true, message: "Success" },
-    active: { subscriptionStatus: "active", success: true, message: "Success" },
-    activated: { subscriptionStatus: "active", success: true, message: "Success" },
-    success: { subscriptionStatus: "active", success: true, message: "Success" },
-    successful: { subscriptionStatus: "active", success: true, message: "Success" },
-    succuss: { subscriptionStatus: "active", success: true, message: "Success" },
+    200: successResult,
+    0: successResult,
+    "00": successResult,
+    9: successResult,
+    201: alreadySubscribedResult,
+    ok: successResult,
+    active: successResult,
+    activated: successResult,
+    success: successResult,
+    successful: successResult,
+    succuss: successResult,
+    "already subscribed": alreadySubscribedResult,
+    "already subscribe": alreadySubscribedResult,
+    alreadysubscribed: alreadySubscribedResult,
+    already_subscribed: alreadySubscribedResult,
     1: { subscriptionStatus: "deactivated", success: false, message: "Activation failed" },
     112: { subscriptionStatus: "suspended", success: false, message: "Subscription in progress" },
     11: { subscriptionStatus: "deactivated", success: false, message: "No consent" },
@@ -141,9 +158,14 @@ export const mapCGWStatus = (statusCode) => {
     26: { subscriptionStatus: "deactivated", success: false, message: "Low balance" },
   };
 
+  if (alreadySubscribed) {
+    return alreadySubscribedResult;
+  }
+
   return (
     statusMap[statusCode] ||
     statusMap[normalizedStatus] ||
+    statusMap[compactStatus] ||
     {
       subscriptionStatus: "deactivated",
       success: false,
