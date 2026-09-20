@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema({
     index: true,
   },
   questionsPlayedToday: { type: Number, default: 0, min: 0 },
-  subscriptionStartTime: { type: Date, default: null },
+  subscriptionStartTime: { type: Date, default: null, index: true },
   nextPlayTime: { type: Date, default: null },
   quizId: { type: mongoose.Schema.Types.ObjectId, ref: "Quiz", default: null },
   currentQuestionIndex: { type: Number, default: 0 },

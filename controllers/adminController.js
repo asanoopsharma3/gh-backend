@@ -5,10 +5,6 @@ import SDPLog from "../models/SDPLog.js";
 import csv from "csv-parser";
 import fs from "fs";
 import {
-  calculateCycleState,
-  DAILY_QUESTION_LIMIT,
-} from "../services/subscriptionService.js";
-import {
   buildDailySubscriptionReport,
   endOfGhanaDay,
   resolveReportRange,
@@ -31,12 +27,46 @@ const endOfDay = (date) => {
   return value;
 };
 
-const buildDateFilter = (date) => {
-  if (!date) return {};
-  const parsed = new Date(date);
-  if (Number.isNaN(parsed.getTime())) return {};
-  return { createdAt: { $gte: startOfDay(parsed), $lte: endOfDay(parsed) } };
+const DASHBOARD_SCAN_LIMIT = 500;
+const MAX_DASHBOARD_RANGE_DAYS = 31;
+
+const toDateOnly = (value) => {
+  const text = String(value || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
 };
+
+const resolveDashboardRange = (query = {}) => {
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const fromInput = toDateOnly(query.fromDate || query.from || query.date);
+  const toInput = toDateOnly(query.toDate || query.to || query.date || fromInput);
+  let from = fromInput ? startOfDay(fromInput) : startOfDay(monthStart);
+  let to = toInput ? endOfDay(toInput) : endOfDay(today);
+
+  if (from > to) {
+    const swap = from;
+    from = startOfDay(to);
+    to = endOfDay(swap);
+  }
+
+  const maxFrom = new Date(to.getTime() - MAX_DASHBOARD_RANGE_DAYS * 24 * 60 * 60 * 1000);
+  if (from < maxFrom) from = maxFrom;
+
+  return { from, to };
+};
+
+const createdAtFilter = (from, to) => ({
+  createdAt: { $gte: from, $lte: to },
+});
+
+const safeSortedFind = (model, filter, sort = { createdAt: -1 }, limit = DASHBOARD_SCAN_LIMIT) =>
+  model
+    .find(filter)
+    .sort(sort)
+    .allowDiskUse(true)
+    .limit(limit)
+    .maxTimeMS(12000)
+    .lean();
 
 const pickFirst = (...values) =>
   values.find((value) => value !== undefined && value !== null && value !== "") || "";
@@ -124,11 +154,33 @@ const matchesSearch = (item, search = "") => {
     .some((value) => String(value || "").toLowerCase().includes(term));
 };
 
-const getAdminEvents = async ({ date, report, search } = {}) => {
-  const filter = buildDateFilter(date);
+const getAdminEvents = async (query = {}) => {
+  const { from, to } = resolveDashboardRange(query);
+  const filter = createdAtFilter(from, to);
+  const report = query.report;
+  const search = query.search;
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(
+    Number(query.limit) > 50 ? 500 : 50,
+    Math.max(1, Number(query.limit) || 10)
+  );
+  const scanLimit = Math.min(DASHBOARD_SCAN_LIMIT, Math.max(limit * page, 100));
+
   const [callbacks, sdpLogs] = await Promise.all([
-    GhanaCallbackLog.find({ ...filter, callbackType: { $ne: "SDP" } }).sort({ createdAt: -1 }).lean(),
-    SDPLog.find(filter).sort({ createdAt: -1 }).lean(),
+    safeSortedFind(
+      GhanaCallbackLog,
+      { ...filter, callbackType: { $ne: "SDP" } },
+      { createdAt: -1 },
+      scanLimit
+    ),
+    safeSortedFind(SDPLog, filter, { createdAt: -1 }, scanLimit).catch(() =>
+      safeSortedFind(
+        SDPLog,
+        { callbackTimestamp: filter.createdAt },
+        { callbackTimestamp: -1 },
+        scanLimit
+      )
+    ),
   ]);
 
   const cgwEvents = callbacks.map((item) => ({
@@ -167,12 +219,18 @@ const getAdminEvents = async ({ date, report, search } = {}) => {
     createdAt: item.createdAt || item.callbackTimestamp,
   }));
 
-  const events = [...sdpEvents, ...cgwEvents];
-
-  return events
+  const events = [...sdpEvents, ...cgwEvents]
     .filter((item) => matchesReport(item, report))
     .filter((item) => matchesSearch(item, search))
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+  const start = (page - 1) * limit;
+  return {
+    events: events.slice(start, start + limit),
+    total: events.length,
+    summaryEvents: events,
+    range: { from, to },
+  };
 };
 
 const buildSummary = async (events) => {
@@ -207,68 +265,6 @@ const buildSummary = async (events) => {
   };
 };
 
-const getSubscriptionUsage = async () => {
-  const [users, callbacks, sdpLogs] = await Promise.all([
-    User.find()
-      .select(
-        "phone subscriptionStatus questionsPlayedToday subscriptionStartTime nextPlayTime"
-      )
-      .sort({ updatedAt: -1 })
-      .lean(),
-    GhanaCallbackLog.find()
-      .select("msisdn status normalizedStatus reason createdAt")
-      .sort({ createdAt: -1 })
-      .lean(),
-    SDPLog.find()
-      .select("msisdn subscriptionStatus normalizedStatus reason createdAt callbackTimestamp")
-      .sort({ createdAt: -1 })
-      .lean(),
-  ]);
-
-  const lastCallbackByMsisdn = new Map();
-  const allCallbacks = [
-    ...sdpLogs.map((item) => ({
-      msisdn: item.msisdn,
-      status: item.subscriptionStatus,
-      normalizedStatus: item.normalizedStatus,
-      reason: item.reason,
-      createdAt: item.createdAt || item.callbackTimestamp,
-    })),
-    ...callbacks,
-  ].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-
-  for (const callback of allCallbacks) {
-    const key = String(callback.msisdn || "").replace(/\D/g, "");
-    if (key && !lastCallbackByMsisdn.has(key)) {
-      lastCallbackByMsisdn.set(key, callback);
-    }
-  }
-
-  return users.map((user) => {
-    const cycle = calculateCycleState(user);
-    const phoneKey = String(user.phone || "").replace(/\D/g, "");
-    const callback = lastCallbackByMsisdn.get(phoneKey);
-    const used = Math.min(
-      Math.max(Number(cycle.questionsPlayedToday || 0), 0),
-      DAILY_QUESTION_LIMIT
-    );
-
-    return {
-      id: String(user._id),
-      msisdn: user.phone,
-      subscriptionStatus: cycle.subscriptionStatus,
-      questionsPlayedToday: used,
-      questionsRemaining: Math.max(DAILY_QUESTION_LIMIT - used, 0),
-      subscriptionStartTime: cycle.subscriptionStartTime,
-      nextPlayTime: cycle.nextPlayTime,
-      lastCallbackStatus:
-        callback?.normalizedStatus || callback?.status || "No callback",
-      lastCallbackAt: callback?.createdAt || null,
-      lastCallbackReason: callback?.reason || "",
-    };
-  });
-};
-
 const loadDailySubscriptionEvents = async (from, to) => {
   const createdAt = {
     $gte: startOfGhanaDay(from),
@@ -276,15 +272,25 @@ const loadDailySubscriptionEvents = async (from, to) => {
   };
 
   const [callbacks, sdpLogs, users] = await Promise.all([
-    GhanaCallbackLog.find({ createdAt }).sort({ createdAt: 1 }).lean(),
-    SDPLog.find({
-      $or: [{ createdAt }, { callbackTimestamp: createdAt }],
-    }).sort({ createdAt: 1 }).lean(),
+    GhanaCallbackLog.find({ createdAt })
+      .select("msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow rawBody rawQuery")
+      .sort({ createdAt: 1 })
+      .allowDiskUse(true)
+      .maxTimeMS(12000)
+      .lean(),
+    SDPLog.find({ createdAt })
+      .select("msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount createdAt callbackTimestamp channel")
+      .sort({ createdAt: 1 })
+      .allowDiskUse(true)
+      .maxTimeMS(12000)
+      .lean(),
     User.find({
       subscriptionStartTime: createdAt,
     })
       .select("phone subscriptionStartTime subscriptionStatus createdAt")
       .sort({ subscriptionStartTime: 1 })
+      .allowDiskUse(true)
+      .maxTimeMS(12000)
       .lean(),
   ]);
 
@@ -322,10 +328,16 @@ const getDailySubscriptionReport = async (query = {}) => {
 
 export const getAdminDashboard = async (req, res) => {
   try {
-    const events = await getAdminEvents(req.query);
-    const summary = await buildSummary(events);
-    const subscriptionUsage = await getSubscriptionUsage();
-    res.json({ success: true, summary, data: events, subscriptionUsage });
+    const { events, total, summaryEvents, range } = await getAdminEvents(req.query);
+    const summary = await buildSummary(summaryEvents);
+    res.json({
+      success: true,
+      summary,
+      data: events,
+      total,
+      range,
+      subscriptionUsage: [],
+    });
   } catch (err) {
     console.error("Admin dashboard error:", err);
     res.status(500).json({ success: false, message: err.message });
@@ -334,8 +346,8 @@ export const getAdminDashboard = async (req, res) => {
 
 export const getAdminSubscriptions = async (req, res) => {
   try {
-    const events = await getAdminEvents(req.query);
-    res.json({ success: true, data: events, total: events.length });
+    const { events, total } = await getAdminEvents(req.query);
+    res.json({ success: true, data: events, total });
   } catch (err) {
     console.error("Admin subscriptions error:", err);
     res.status(500).json({ success: false, message: err.message });

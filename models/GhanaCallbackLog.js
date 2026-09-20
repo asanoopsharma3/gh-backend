@@ -22,4 +22,7 @@ const ghanaCallbackLogSchema = new mongoose.Schema(
   { timestamps: true, collection: "ghanacallbacklogs" }
 );
 
+ghanaCallbackLogSchema.index({ createdAt: -1 });
+ghanaCallbackLogSchema.index({ callbackType: 1, createdAt: -1 });
+
 export default mongoose.model("GhanaCallbackLog", ghanaCallbackLogSchema);

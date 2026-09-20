@@ -31,4 +31,7 @@ const sdpLogSchema = new mongoose.Schema(
   { timestamps: true, collection: "sdplog" }
 );
 
+sdpLogSchema.index({ createdAt: -1 });
+sdpLogSchema.index({ callbackTimestamp: -1, createdAt: -1 });
+
 export default mongoose.model("SDPLog", sdpLogSchema);
