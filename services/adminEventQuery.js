@@ -14,8 +14,9 @@ import {
 } from "./dailySubscriptionReport.js";
 
 const MAX_RANGE_DAYS = 31;
-const QUERY_TIME_MS = 8000;
+const QUERY_TIME_MS = 20000;
 const SCAN = 1500;
+const REPORT_SCAN = 5000;
 
 const toDateOnly = (value) => {
   const text = String(value || "").slice(0, 10);
@@ -69,8 +70,9 @@ const safeFind = async (label, exec) => {
 };
 
 const SDP_SELECT =
-  "msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount chargingAmount createdAt callbackTimestamp channel";
-const SDP_CALLBACK_SELECT = "msisdn offerCode status lifecycle reason createdAt callbackTimestamp";
+  "msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason normalizedStatus chargeAmount chargingAmount createdAt callbackTimestamp channel";
+const SDP_CALLBACK_SELECT =
+  "msisdn offerCode status lifecycle reason createdAt callbackTimestamp subscriberLifeCycle command";
 const GHANA_SELECT =
   "msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow";
 
@@ -94,30 +96,77 @@ const uniqueDocs = (items) => {
   return docs;
 };
 
-const findNoSort = (model, label, filter, select) =>
+const findNoSort = (model, label, filter, select, limit = SCAN) =>
   safeFind(label, () =>
-    model.find(filter).select(select).limit(SCAN).maxTimeMS(QUERY_TIME_MS).lean()
+    model.find(filter).select(select).limit(limit).maxTimeMS(QUERY_TIME_MS).lean()
   );
 
-const findSdpByDate = async (fromDate, toDate) => {
-  const idRange = objectIdRange(fromDate, toDate);
+const renewalMatch = {
+  $or: [
+    { subscriberLifeCycle: /ren/i },
+    { lifecycle: /ren/i },
+    { normalizedStatus: /renew/i },
+    { reason: /renew/i },
+    { command: /renew/i },
+  ],
+};
+
+const churnMatch = {
+  $or: [
+    { normalizedStatus: /churn/i },
+    { reason: /insufficient|low balance|churn/i },
+    { subscriptionStatus: { $in: ["2", "26", "29", "55", "63", "111", "G", "g"] } },
+    { status: { $in: ["2", "26", "29", "55", "63", "111", "G", "g"] } },
+  ],
+};
+
+const findSdpByDate = async (fromDate, toDate, report = "all") => {
   const tsRange = { callbackTimestamp: { $gte: fromDate, $lte: toDate } };
-  const [byId, byTimestamp, callbacksById, callbacksByTs] = await Promise.all([
+  const createdRange = { createdAt: { $gte: fromDate, $lte: toDate } };
+  const idRange = objectIdRange(fromDate, toDate);
+  const targeted = report === "renewal" ? renewalMatch : report === "churn" ? churnMatch : null;
+
+  if (targeted) {
+    const filterFor = (timeFilter) => ({ $and: [timeFilter, targeted] });
+    const docs = await Promise.all([
+      findNoSort(SDPLog, "SDPLog.createdAt.report", filterFor(createdRange), SDP_SELECT, REPORT_SCAN),
+      findNoSort(SDPLog, "SDPLog.callbackTimestamp.report", filterFor(tsRange), SDP_SELECT, REPORT_SCAN),
+      findNoSort(SDPLog, "SDPLog._id.report", filterFor(idRange), SDP_SELECT, REPORT_SCAN),
+      findNoSort(SDPCallback, "SDPCallback.createdAt.report", filterFor(createdRange), SDP_CALLBACK_SELECT, REPORT_SCAN),
+      findNoSort(SDPCallback, "SDPCallback.callbackTimestamp.report", filterFor(tsRange), SDP_CALLBACK_SELECT, REPORT_SCAN),
+    ]);
+    return uniqueDocs(docs.flat());
+  }
+
+  const [byId, byTimestamp, byCreated, callbacksById, callbacksByTs] = await Promise.all([
     findNoSort(SDPLog, "SDPLog._id", idRange, SDP_SELECT),
     findNoSort(SDPLog, "SDPLog.callbackTimestamp", tsRange, SDP_SELECT),
+    findNoSort(SDPLog, "SDPLog.createdAt", createdRange, SDP_SELECT),
     findNoSort(SDPCallback, "SDPCallback._id", idRange, SDP_CALLBACK_SELECT),
     findNoSort(SDPCallback, "SDPCallback.callbackTimestamp", tsRange, SDP_CALLBACK_SELECT),
   ]);
-  return uniqueDocs([...byId, ...byTimestamp, ...callbacksById, ...callbacksByTs]);
+  return uniqueDocs([...byId, ...byTimestamp, ...byCreated, ...callbacksById, ...callbacksByTs]);
 };
 
-const findCgwByDate = async (fromDate, toDate) => {
+const findCgwByDate = async (fromDate, toDate, report = "all") => {
   const createdRange = { createdAt: { $gte: fromDate, $lte: toDate } };
-  const [sdp, cgw] = await Promise.all([
+  const targeted = report === "renewal" ? renewalMatch : report === "churn" ? churnMatch : null;
+  if (targeted) {
+    return findNoSort(
+      GhanaCallbackLog,
+      "GhanaCallbackLog.report",
+      { $and: [createdRange, targeted] },
+      GHANA_SELECT,
+      REPORT_SCAN
+    );
+  }
+
+  const [sdp, cgw, untyped] = await Promise.all([
     findNoSort(GhanaCallbackLog, "GhanaCallbackLog.SDP", { ...createdRange, callbackType: "SDP" }, GHANA_SELECT),
     findNoSort(GhanaCallbackLog, "GhanaCallbackLog.CGW", { ...createdRange, callbackType: "CGW" }, GHANA_SELECT),
+    findNoSort(GhanaCallbackLog, "GhanaCallbackLog.any", createdRange, GHANA_SELECT),
   ]);
-  return [...sdp, ...cgw];
+  return uniqueDocs([...sdp, ...cgw, ...untyped]);
 };
 
 const findActiveUsersByDate = async (fromDate, toDate) => {
@@ -176,11 +225,12 @@ const toTableEvent = (item, source) => {
   };
 };
 
-export const loadAdminRangeEvents = async (fromDate, toDate) => {
+export const loadAdminRangeEvents = async (fromDate, toDate, report = "all") => {
+  const skipUsers = report === "renewal" || report === "churn" || report === "failed";
   const [sdpDocs, ghanaDocs, userDocs] = await Promise.all([
-    findSdpByDate(fromDate, toDate),
-    findCgwByDate(fromDate, toDate),
-    findActiveUsersByDate(fromDate, toDate),
+    findSdpByDate(fromDate, toDate, report),
+    findCgwByDate(fromDate, toDate, report),
+    skipUsers ? Promise.resolve([]) : findActiveUsersByDate(fromDate, toDate),
   ]);
 
   return [
@@ -193,8 +243,15 @@ export const loadAdminRangeEvents = async (fromDate, toDate) => {
 const matchesTab = (event, report) => {
   if (!report || report === "all") return event.type !== "other";
   if (report === "success") return event.type === "new";
-  if (report === "renewal") return event.type === "renewal";
-  if (report === "churn") return event.type === "churn";
+  const lifecycle = String(event.lifecycle || event.subscriberLifeCycle || "").toLowerCase();
+  const reason = String(event.reason || "").toLowerCase();
+  const status = String(event.status || event.rawStatus || event.type || "").toLowerCase();
+  if (report === "renewal") {
+    return event.type === "renewal" || status.includes("renew") || lifecycle.includes("ren") || reason.includes("renew");
+  }
+  if (report === "churn") {
+    return event.type === "churn" || status.includes("churn") || /insufficient|low balance|churn/.test(reason);
+  }
   if (report === "failed") return event.type === "failed" || event.type === "unsub";
   return event.type === report;
 };
@@ -216,10 +273,11 @@ export const getPaginatedAdminEvents = async (query = {}) => {
     const report = query.report || "all";
     const page = Math.max(1, Number(query.page) || 1);
     const requested = Math.max(1, Number(query.limit) || 10);
-    const limit = Math.min(50, requested);
+    const maxRows = report === "renewal" || report === "churn" ? 500 : 50;
+    const limit = Math.min(maxRows, requested);
     const skip = (page - 1) * limit;
 
-    const allEvents = await loadAdminRangeEvents(range.fromDate, range.toDate);
+    const allEvents = await loadAdminRangeEvents(range.fromDate, range.toDate, report);
     const uniqueKeys = new Set();
     const deduped = [];
     for (const event of allEvents.sort(
@@ -309,6 +367,8 @@ export const buildDashboardPayload = async (query = {}) => {
         type: "new",
       }))
     ),
+    renewalRows: (pageData.allEvents || []).filter((event) => event.type === "renewal"),
+    churnRows: (pageData.allEvents || []).filter((event) => event.type === "churn"),
     total: pageData.total,
     range: pageData.range,
     daily: daily.daily,

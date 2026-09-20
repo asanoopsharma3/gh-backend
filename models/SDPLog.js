@@ -33,5 +33,7 @@ const sdpLogSchema = new mongoose.Schema(
 
 sdpLogSchema.index({ createdAt: -1 });
 sdpLogSchema.index({ callbackTimestamp: -1, createdAt: -1 });
+sdpLogSchema.index({ subscriberLifeCycle: 1, createdAt: -1 });
+sdpLogSchema.index({ normalizedStatus: 1, createdAt: -1 });
 
 export default mongoose.model("SDPLog", sdpLogSchema);

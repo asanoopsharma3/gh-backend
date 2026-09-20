@@ -195,18 +195,22 @@ export const classifySubscriptionEvent = (item = {}) => {
   const compactCommand = compactText(command);
   const plan = getOfferPlan(offerCode);
 
+  const normalized = compactText(item.normalizedStatus);
+
   if (compactLifecycle.includes("unsub") || compactCommand.includes("unsub") || compactText(status).includes("unsub")) {
     return "unsub";
   }
   if (
     compactLifecycle.includes("ren") ||
     compactLifecycle.includes("renew") ||
+    normalized.includes("renew") ||
     includesAny(reason, ["renew"]) ||
     compactCommand.includes("renew")
   ) {
     return "renewal";
   }
   if (
+    normalized.includes("churn") ||
     includesAny(reason, ["insufficient", "low balance", "churn"]) ||
     CHURN_STATUSES.has(String(status).trim().toLowerCase())
   ) {

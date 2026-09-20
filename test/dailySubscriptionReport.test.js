@@ -49,6 +49,25 @@ test("SDP renewals and unsubs are not new subscriptions", () => {
   );
 });
 
+test("normalizedStatus renewal/churn is classified even without lifecycle", () => {
+  assert.equal(
+    classifySubscriptionEvent({
+      status: "A",
+      normalizedStatus: "renewal",
+      source: "SDP",
+    }),
+    "renewal"
+  );
+  assert.equal(
+    classifySubscriptionEvent({
+      status: "2",
+      normalizedStatus: "churn",
+      source: "SDP",
+    }),
+    "churn"
+  );
+});
+
 test("SDP success without lifecycle still counts as a new activation", () => {
   assert.equal(
     classifySubscriptionEvent({
