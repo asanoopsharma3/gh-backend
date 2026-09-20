@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import GhanaCallbackLog from "../models/GhanaCallbackLog.js";
 import SDPCallback from "../models/SDPCallback.js";
 import SDPLog from "../models/SDPLog.js";
@@ -67,13 +68,17 @@ const safeFind = async (label, exec) => {
 
 const SDP_SELECT =
   "msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount chargingAmount createdAt callbackTimestamp channel";
+const SDP_CALLBACK_SELECT = "msisdn offerCode status lifecycle reason createdAt callbackTimestamp";
+const GHANA_SELECT =
+  "msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow";
 
-const dateRangeOr = (fromDate, toDate) => ({
-  $or: [
-    { callbackTimestamp: { $gte: fromDate, $lte: toDate } },
-    { createdAt: { $gte: fromDate, $lte: toDate } },
-  ],
-});
+const objectIdRange = (fromDate, toDate) => {
+  const fromSec = Math.floor(new Date(fromDate).getTime() / 1000);
+  const toSec = Math.floor(new Date(toDate).getTime() / 1000) + 1;
+  const fromId = mongoose.Types.ObjectId.createFromTime(fromSec);
+  const toId = mongoose.Types.ObjectId.createFromTime(toSec);
+  return { _id: { $gte: fromId, $lte: toId } };
+};
 
 const uniqueDocs = (items) => {
   const seen = new Set();
@@ -87,38 +92,31 @@ const uniqueDocs = (items) => {
   return docs;
 };
 
+const findNoSort = (model, label, filter, select) =>
+  safeFind(label, () =>
+    model.find(filter).select(select).limit(SCAN).maxTimeMS(QUERY_TIME_MS).lean()
+  );
+
 const findSdpByDate = async (fromDate, toDate) => {
-  const filter = dateRangeOr(fromDate, toDate);
-  const [sdpLogs, sdpCallbacks] = await Promise.all([
-    safeFind("SDPLog.range", () =>
-      SDPLog.find(filter)
-        .select(SDP_SELECT)
-        .limit(SCAN)
-        .maxTimeMS(QUERY_TIME_MS)
-        .lean()
-    ),
-    safeFind("SDPCallback.range", () =>
-      SDPCallback.find(filter)
-        .select("msisdn offerCode status lifecycle reason createdAt callbackTimestamp")
-        .limit(SCAN)
-        .maxTimeMS(QUERY_TIME_MS)
-        .lean()
-    ),
+  const idRange = objectIdRange(fromDate, toDate);
+  const tsRange = { callbackTimestamp: { $gte: fromDate, $lte: toDate } };
+  const [byId, byTimestamp, callbacksById, callbacksByTs] = await Promise.all([
+    findNoSort(SDPLog, "SDPLog._id", idRange, SDP_SELECT),
+    findNoSort(SDPLog, "SDPLog.callbackTimestamp", tsRange, SDP_SELECT),
+    findNoSort(SDPCallback, "SDPCallback._id", idRange, SDP_CALLBACK_SELECT),
+    findNoSort(SDPCallback, "SDPCallback.callbackTimestamp", tsRange, SDP_CALLBACK_SELECT),
   ]);
-  return uniqueDocs([...sdpLogs, ...sdpCallbacks]);
+  return uniqueDocs([...byId, ...byTimestamp, ...callbacksById, ...callbacksByTs]);
 };
 
-const findCgwByDate = async (fromDate, toDate) =>
-  safeFind("GhanaCallbackLog.range", () =>
-    GhanaCallbackLog.find({
-      createdAt: { $gte: fromDate, $lte: toDate },
-      callbackType: { $in: ["SDP", "CGW"] },
-    })
-      .select("msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow")
-      .limit(SCAN)
-      .maxTimeMS(QUERY_TIME_MS)
-      .lean()
-  );
+const findCgwByDate = async (fromDate, toDate) => {
+  const createdRange = { createdAt: { $gte: fromDate, $lte: toDate } };
+  const [sdp, cgw] = await Promise.all([
+    findNoSort(GhanaCallbackLog, "GhanaCallbackLog.SDP", { ...createdRange, callbackType: "SDP" }, GHANA_SELECT),
+    findNoSort(GhanaCallbackLog, "GhanaCallbackLog.CGW", { ...createdRange, callbackType: "CGW" }, GHANA_SELECT),
+  ]);
+  return [...sdp, ...cgw];
+};
 
 const toTableEvent = (item, source) => {
   const reportEvent = toReportEvent({ ...item, source }, source);
