@@ -1,22 +1,18 @@
-import mongoose from "mongoose";
 import GhanaCallbackLog from "../models/GhanaCallbackLog.js";
+import SDPCallback from "../models/SDPCallback.js";
 import SDPLog from "../models/SDPLog.js";
-import User from "../models/User.js";
 import {
-  ghanaDate,
+  buildDailySubscriptionReport,
+  resolveReportRange,
   startOfGhanaDay,
   endOfGhanaDay,
+  ghanaDate,
+  toReportEvent,
 } from "./dailySubscriptionReport.js";
-import { INITIAL_OFFER_CODE, getOfferPlan } from "../config/cgwconfig.js";
 
 const MAX_RANGE_DAYS = 31;
 const QUERY_TIME_MS = 8000;
-const PAGE_SCAN = 200;
-
-const SUCCESS_CGW = ["200", "0", "00", "a", "ok", "active", "activated", "success", "successful", "succuss"];
-const ALREADY_CGW = ["9", "115"];
-const FAILED_CGW = ["1", "11", "12", "13", "91", "112", "150", "186", "644", "1316", "d", "s"];
-const CHURN_CGW = ["2", "26", "29", "55", "63", "111", "g"];
+const SCAN = 1500;
 
 const toDateOnly = (value) => {
   const text = String(value || "").slice(0, 10);
@@ -51,108 +47,11 @@ export const resolveAdminRange = (query = {}, now = new Date()) => {
   };
 };
 
-const objectIdRange = (fromDate, toDate) => ({
-  _id: {
-    $gte: mongoose.Types.ObjectId.createFromTime(Math.floor(fromDate.getTime() / 1000)),
-    $lte: mongoose.Types.ObjectId.createFromTime(Math.floor(toDate.getTime() / 1000)),
-  },
-});
-
-const normalizeStatus = (status = "", reason = "", lifecycle = "") => {
-  const statusText = String(status).toLowerCase();
-  const reasonText = String(reason).toLowerCase();
-  const lifecycleText = String(lifecycle).toLowerCase();
-  if (lifecycleText.startsWith("unsub") || statusText.includes("unsub")) return "failed";
-  if (reasonText.includes("insufficient") || reasonText.includes("low balance") || reasonText.includes("churn") || CHURN_CGW.includes(statusText)) {
-    return "churn";
-  }
-  if (lifecycleText.startsWith("ren") || reasonText.includes("renew")) return "renewal";
-  if (SUCCESS_CGW.includes(statusText) || ALREADY_CGW.includes(statusText) || statusText.includes("alreadysubscrib")) {
-    return "success";
-  }
-  if (FAILED_CGW.includes(statusText) || ["failed", "failure", "fail", "deactivated", "inactive", "suspended"].includes(statusText)) {
-    return "failed";
-  }
-  return statusText || "unknown";
-};
-
-const mapCgw = (item) => ({
-  id: String(item._id || item.cgid || ""),
-  msisdn: item.msisdn || "",
-  offerCode: item.offerCode || "",
-  reason: item.reason || "-",
-  nextBillingDate: "",
-  status: item.normalizedStatus || normalizeStatus(item.status, item.reason, item.lifecycle),
-  rawStatus: item.status || "-",
-  chargingAmount: Number(item.chargingAmount || 0),
-  lifecycle: item.lifecycle || "-",
-  source: "CGW Callback",
-  flow: item.flow || "UNKNOWN",
-  cgid: item.cgid || "",
-  createdAt: item.createdAt || item.updatedAt,
-});
-
-const mapSdp = (item) => ({
-  id: String(item._id || item.transactionId || item.requestId || ""),
-  msisdn: item.msisdn || "",
-  offerCode: item.offerCode || item.planId || "",
-  reason: item.reason || "-",
-  nextBillingDate: item.nextBillingDate || "",
-  status:
-    item.normalizedStatus ||
-    normalizeStatus(item.subscriptionStatus || item.status, item.reason, item.subscriberLifeCycle || item.lifecycle),
-  rawStatus: item.subscriptionStatus || item.status || "-",
-  chargingAmount: Number(item.chargeAmount || 0),
-  lifecycle: item.subscriberLifeCycle || item.lifecycle || "-",
-  source: "SDP Callback",
-  flow: item.channel || "SDP",
-  cgid: "",
-  transactionId: item.transactionId || "",
-  requestId: item.requestId || "",
-  createdAt: item.callbackTimestamp || item.createdAt || item.updatedAt,
-});
-
-const mapUser = (user) => ({
-  id: String(user._id),
-  msisdn: String(user.phone || "").replace(/\D/g, ""),
-  offerCode: INITIAL_OFFER_CODE,
-  reason: "User activation",
-  nextBillingDate: "",
-  status: "success",
-  rawStatus: user.subscriptionStatus || "200",
-  chargingAmount: Number(getOfferPlan(INITIAL_OFFER_CODE).amountGhs || 0),
-  lifecycle: "SUB",
-  source: "User",
-  flow: "LOCAL",
-  cgid: "",
-  createdAt: user.subscriptionStartTime || user.createdAt,
-});
-
-const matchesReport = (event, report) => {
-  if (!report || report === "all") return true;
-  const status = String(event.status || "").toLowerCase();
-  const raw = String(event.rawStatus || "").toLowerCase();
-  const life = String(event.lifecycle || "").toLowerCase();
-  if (report === "success") {
-    if (status === "renewal" || life.startsWith("ren") || life.includes("unsub")) return false;
-    return (
-      status === "success" ||
-      status === "active" ||
-      ["a", "200", "0", "00", "active", "activated", "ok"].includes(raw) ||
-      life.startsWith("sub") ||
-      life === "new"
-    );
-  }
-  if (report === "renewal") return status === "renewal" || life.startsWith("ren");
-  if (report === "churn") return status === "churn";
-  if (report === "failed") return status === "failed" || life.includes("unsub");
-  return status === report;
-};
-
 const emptyPage = (range) => ({
   events: [],
   total: 0,
   summaryEvents: [],
+  allEvents: [],
   counts: { sdpTotal: 0, cgwTotal: 0, userTotal: 0, total: 0 },
   range,
 });
@@ -167,49 +66,106 @@ const safeFind = async (label, exec) => {
 };
 
 const SDP_SELECT =
-  "msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount createdAt callbackTimestamp channel";
+  "msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount chargingAmount createdAt callbackTimestamp channel";
 
-const findSdpNoSort = async (fromDate, toDate, limit) => {
-  const byCallback = await safeFind("SDPLog.callbackTimestamp", () =>
-    SDPLog.find({ callbackTimestamp: { $gte: fromDate, $lte: toDate } })
-      .select(SDP_SELECT)
-      .limit(limit)
-      .maxTimeMS(QUERY_TIME_MS)
-      .lean()
-  );
-  if (byCallback.length) return byCallback;
+const dateRangeOr = (fromDate, toDate) => ({
+  $or: [
+    { callbackTimestamp: { $gte: fromDate, $lte: toDate } },
+    { createdAt: { $gte: fromDate, $lte: toDate } },
+  ],
+});
 
-  return safeFind("SDPLog._id", () =>
-    SDPLog.find(objectIdRange(fromDate, toDate))
-      .select(SDP_SELECT)
-      .limit(limit)
-      .maxTimeMS(QUERY_TIME_MS)
-      .lean()
-  );
+const uniqueDocs = (items) => {
+  const seen = new Set();
+  const docs = [];
+  for (const item of items) {
+    const id = String(item._id || item.transactionId || item.requestId || "");
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    docs.push(item);
+  }
+  return docs;
 };
 
-const findCgwNoSort = (fromDate, toDate, limit) =>
-  safeFind("GhanaCallbackLog.createdAt", () =>
-    GhanaCallbackLog.find({ createdAt: { $gte: fromDate, $lte: toDate } })
+const findSdpByDate = async (fromDate, toDate) => {
+  const filter = dateRangeOr(fromDate, toDate);
+  const [sdpLogs, sdpCallbacks] = await Promise.all([
+    safeFind("SDPLog.range", () =>
+      SDPLog.find(filter)
+        .select(SDP_SELECT)
+        .limit(SCAN)
+        .maxTimeMS(QUERY_TIME_MS)
+        .lean()
+    ),
+    safeFind("SDPCallback.range", () =>
+      SDPCallback.find(filter)
+        .select("msisdn offerCode status lifecycle reason createdAt callbackTimestamp")
+        .limit(SCAN)
+        .maxTimeMS(QUERY_TIME_MS)
+        .lean()
+    ),
+  ]);
+  return uniqueDocs([...sdpLogs, ...sdpCallbacks]);
+};
+
+const findCgwByDate = async (fromDate, toDate) =>
+  safeFind("GhanaCallbackLog.range", () =>
+    GhanaCallbackLog.find({
+      createdAt: { $gte: fromDate, $lte: toDate },
+      callbackType: { $in: ["SDP", "CGW"] },
+    })
       .select("msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow")
-      .limit(limit)
+      .limit(SCAN)
       .maxTimeMS(QUERY_TIME_MS)
       .lean()
   );
 
-const findUsersNoSort = (fromDate, toDate, limit) =>
-  safeFind("User.subscriptionStartTime", () =>
-    User.find({
-      $or: [
-        { subscriptionStartTime: { $gte: fromDate, $lte: toDate } },
-        { createdAt: { $gte: fromDate, $lte: toDate } },
-      ],
-    })
-      .select("phone subscriptionStartTime createdAt subscriptionStatus")
-      .limit(limit)
-      .maxTimeMS(QUERY_TIME_MS)
-      .lean()
-  );
+const toTableEvent = (item, source) => {
+  const reportEvent = toReportEvent({ ...item, source }, source);
+  const lifecycle = String(item.subscriberLifeCycle || item.lifecycle || "").trim();
+  const rawStatus = String(
+    item.status || item.subscriptionStatus || item.normalizedStatus || reportEvent.status || ""
+  ).trim();
+  return {
+    id: reportEvent.id,
+    msisdn: reportEvent.msisdn,
+    offerCode: reportEvent.offerCode,
+    planName: reportEvent.planName,
+    reason: reportEvent.reason,
+    nextBillingDate: item.nextBillingDate || "",
+    status: reportEvent.type === "new" ? "success" : reportEvent.type,
+    rawStatus,
+    chargingAmount: reportEvent.priceGhs,
+    priceGhs: reportEvent.priceGhs,
+    lifecycle,
+    subscriberLifeCycle: lifecycle,
+    source: reportEvent.source,
+    flow: reportEvent.flow,
+    type: reportEvent.type,
+    createdAt: reportEvent.createdAt,
+  };
+};
+
+export const loadAdminRangeEvents = async (fromDate, toDate) => {
+  const [sdpDocs, ghanaDocs] = await Promise.all([
+    findSdpByDate(fromDate, toDate),
+    findCgwByDate(fromDate, toDate),
+  ]);
+
+  return [
+    ...sdpDocs.map((item) => toTableEvent(item, "SDP")),
+    ...ghanaDocs.map((item) => toTableEvent(item, item.callbackType || "CGW")),
+  ];
+};
+
+const matchesTab = (event, report) => {
+  if (!report || report === "all") return event.type !== "other";
+  if (report === "success") return event.type === "new";
+  if (report === "renewal") return event.type === "renewal";
+  if (report === "churn") return event.type === "churn";
+  if (report === "failed") return event.type === "failed" || event.type === "unsub";
+  return event.type === report;
+};
 
 export const getAdminReportCounts = async (query = {}) => ({
   range: resolveAdminRange(query),
@@ -230,40 +186,27 @@ export const getPaginatedAdminEvents = async (query = {}) => {
     const requested = Math.max(1, Number(query.limit) || 10);
     const limit = Math.min(50, requested);
     const skip = (page - 1) * limit;
-    const { fromDate, toDate } = range;
 
-    const [sdpDocs, cgwDocs, userDocs] = await Promise.all([
-      findSdpNoSort(fromDate, toDate, PAGE_SCAN),
-      findCgwNoSort(fromDate, toDate, PAGE_SCAN),
-      findUsersNoSort(fromDate, toDate, PAGE_SCAN),
-    ]);
-
-    const merged = [
-      ...sdpDocs.map(mapSdp),
-      ...cgwDocs.map(mapCgw),
-      ...userDocs.map(mapUser),
-    ].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-
+    const allEvents = await loadAdminRangeEvents(range.fromDate, range.toDate);
     const uniqueKeys = new Set();
     const deduped = [];
-    for (const event of merged) {
-      const key = `${event.source}|${event.id || event.msisdn}|${event.createdAt || ""}`;
+    for (const event of allEvents.sort(
+      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+    )) {
+      if (!event.msisdn) continue;
+      const key = `${event.type}|${event.msisdn}|${String(event.createdAt || "").slice(0, 16)}`;
       if (uniqueKeys.has(key)) continue;
       uniqueKeys.add(key);
       deduped.push(event);
     }
 
-    const filtered = deduped.filter((event) => matchesReport(event, report));
+    const filtered = deduped.filter((event) => matchesTab(event, report));
     return {
       events: filtered.slice(skip, skip + limit),
       total: filtered.length,
-      summaryEvents: filtered.slice(0, 200),
-      counts: {
-        sdpTotal: sdpDocs.length,
-        cgwTotal: cgwDocs.length,
-        userTotal: userDocs.length,
-        total: filtered.length,
-      },
+      summaryEvents: filtered,
+      allEvents: deduped,
+      counts: { total: filtered.length },
       range,
     };
   } catch (error) {
@@ -275,34 +218,65 @@ export const getPaginatedAdminEvents = async (query = {}) => {
 export const loadDailySubscriptionEvents = async (from, to) => {
   const fromDate = startOfGhanaDay(from);
   const toDate = endOfGhanaDay(to);
-  const dailyPlan = getOfferPlan(INITIAL_OFFER_CODE);
-  const [callbacks, sdpLogs, users] = await Promise.all([
-    findCgwNoSort(fromDate, toDate, PAGE_SCAN),
-    findSdpNoSort(fromDate, toDate, PAGE_SCAN),
-    findUsersNoSort(fromDate, toDate, PAGE_SCAN),
-  ]);
+  const events = await loadAdminRangeEvents(fromDate, toDate);
+  return {
+    events: events.map((event) => ({
+      msisdn: event.msisdn,
+      offerCode: event.offerCode,
+      status: event.rawStatus || event.status,
+      lifecycle: event.lifecycle,
+      source: event.source,
+      flow: event.flow,
+      chargingAmount: event.priceGhs,
+      createdAt: event.createdAt,
+    })),
+    extras: { renewals: 0, unsub: 0 },
+  };
+};
+
+export const buildDashboardPayload = async (query = {}) => {
+  const pageData = await getPaginatedAdminEvents(query);
+  const range = resolveReportRange({
+    from: pageData.range.from,
+    to: pageData.range.to,
+  });
+  const daily = buildDailySubscriptionReport(
+    (pageData.allEvents || []).map((event) => ({
+      msisdn: event.msisdn,
+      offerCode: event.offerCode,
+      status: event.rawStatus,
+      subscriptionStatus: event.rawStatus,
+      lifecycle: event.lifecycle === "-" ? "" : event.lifecycle,
+      subscriberLifeCycle: event.subscriberLifeCycle || (event.lifecycle === "-" ? "" : event.lifecycle),
+      source: event.source,
+      flow: event.flow,
+      chargingAmount: event.priceGhs,
+      createdAt: event.createdAt,
+    })),
+    range
+  );
 
   return {
-    events: [
-      ...callbacks.map((item) => ({ ...item, source: item.callbackType || "CGW" })),
-      ...sdpLogs.map((item) => ({
-        ...item,
-        source: "SDP",
-        status: item.subscriptionStatus || item.status,
-        lifecycle: item.subscriberLifeCycle || item.lifecycle,
-        createdAt: item.callbackTimestamp || item.createdAt,
-      })),
-      ...users.map((user) => ({
-        msisdn: user.phone,
-        offerCode: INITIAL_OFFER_CODE,
-        status: "200",
-        lifecycle: "SUB",
-        source: "USER",
-        flow: "LOCAL",
-        chargingAmount: dailyPlan.amountGhs,
-        createdAt: user.subscriptionStartTime || user.createdAt,
-      })),
-    ],
-    extras: { renewals: 0, unsub: 0 },
+    success: true,
+    summary: {
+      totalSubscribers: daily.summary.uniqueUsers,
+      success: daily.summary.newSubscriptions,
+      renewals: daily.summary.renewals,
+      alreadySubscribed: daily.summary.alreadySubscribed,
+      totalGhsAmount: Number(
+        (Number(daily.summary.newRevenueGhs || 0) + Number(daily.summary.renewalRevenueGhs || 0)).toFixed(2)
+      ),
+      newRevenueGhs: daily.summary.newRevenueGhs,
+      topup: daily.summary.topup,
+    },
+    data: pageData.events,
+    total: pageData.total,
+    range: pageData.range,
+    daily: daily.daily,
+    view: daily.view,
+    plans: daily.plans,
+    timezone: daily.timezone,
+    currency: daily.currency,
+    subscriptionUsage: [],
   };
 };

@@ -9,6 +9,7 @@ import {
 import {
   getPaginatedAdminEvents,
   loadDailySubscriptionEvents,
+  buildDashboardPayload,
 } from "../services/adminEventQuery.js";
 
 const buildSummary = async (query, pageData) => {
@@ -54,16 +55,8 @@ const getDailySubscriptionReport = async (query = {}) => {
 
 export const getAdminDashboard = async (req, res) => {
   try {
-    const pageData = await getPaginatedAdminEvents(req.query);
-    const summary = await buildSummary(req.query, pageData);
-    res.json({
-      success: true,
-      summary,
-      data: pageData.events,
-      total: pageData.total,
-      range: pageData.range,
-      subscriptionUsage: [],
-    });
+    const payload = await buildDashboardPayload(req.query);
+    res.json(payload);
   } catch (err) {
     console.error("Admin dashboard error:", err);
     res.json({
@@ -73,12 +66,11 @@ export const getAdminDashboard = async (req, res) => {
         totalSubscribers: 0,
         success: 0,
         renewals: 0,
-        churn: 0,
-        failed: 0,
         totalGhsAmount: 0,
       },
       data: [],
       total: 0,
+      daily: [],
       warning: err.message,
       subscriptionUsage: [],
     });
