@@ -1,7 +1,9 @@
 import mongoose from "mongoose";
+import { INITIAL_OFFER_CODE } from "../config/cgwconfig.js";
 import GhanaCallbackLog from "../models/GhanaCallbackLog.js";
 import SDPCallback from "../models/SDPCallback.js";
 import SDPLog from "../models/SDPLog.js";
+import User from "../models/User.js";
 import {
   buildDailySubscriptionReport,
   resolveReportRange,
@@ -118,6 +120,36 @@ const findCgwByDate = async (fromDate, toDate) => {
   return [...sdp, ...cgw];
 };
 
+const findActiveUsersByDate = async (fromDate, toDate) => {
+  const users = await safeFind("User.active", () =>
+    User.find({ subscriptionStatus: "active" })
+      .select("phone subscriptionStatus subscriptionStartTime createdAt")
+      .limit(5000)
+      .maxTimeMS(QUERY_TIME_MS)
+      .lean()
+  );
+  const fromMs = new Date(fromDate).getTime();
+  const toMs = new Date(toDate).getTime();
+  return users
+    .filter((user) => user.phone)
+    .map((user) => {
+      const stamp = user.subscriptionStartTime || user.createdAt;
+      const time = new Date(stamp || 0).getTime();
+      if (!Number.isFinite(time) || time < fromMs || time > toMs) return null;
+      return {
+        _id: user._id,
+        msisdn: user.phone,
+        offerCode: INITIAL_OFFER_CODE,
+        status: "active",
+        lifecycle: "SUB",
+        chargingAmount: 1,
+        createdAt: stamp,
+        source: "USER",
+      };
+    })
+    .filter(Boolean);
+};
+
 const toTableEvent = (item, source) => {
   const reportEvent = toReportEvent({ ...item, source }, source);
   const lifecycle = String(item.subscriberLifeCycle || item.lifecycle || "").trim();
@@ -145,14 +177,16 @@ const toTableEvent = (item, source) => {
 };
 
 export const loadAdminRangeEvents = async (fromDate, toDate) => {
-  const [sdpDocs, ghanaDocs] = await Promise.all([
+  const [sdpDocs, ghanaDocs, userDocs] = await Promise.all([
     findSdpByDate(fromDate, toDate),
     findCgwByDate(fromDate, toDate),
+    findActiveUsersByDate(fromDate, toDate),
   ]);
 
   return [
     ...sdpDocs.map((item) => toTableEvent(item, "SDP")),
     ...ghanaDocs.map((item) => toTableEvent(item, item.callbackType || "CGW")),
+    ...userDocs.map((item) => toTableEvent(item, "USER")),
   ];
 };
 
@@ -268,6 +302,13 @@ export const buildDashboardPayload = async (query = {}) => {
       topup: daily.summary.topup,
     },
     data: pageData.events,
+    subscribers: daily.daily.flatMap((day) =>
+      (day.subscriptions || []).map((row) => ({
+        ...row,
+        status: row.status || "success",
+        type: "new",
+      }))
+    ),
     total: pageData.total,
     range: pageData.range,
     daily: daily.daily,
