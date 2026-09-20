@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import GhanaCallbackLog from "../models/GhanaCallbackLog.js";
 import SDPLog from "../models/SDPLog.js";
 import User from "../models/User.js";
@@ -9,8 +10,8 @@ import {
 import { INITIAL_OFFER_CODE, getOfferPlan } from "../config/cgwconfig.js";
 
 const MAX_RANGE_DAYS = 31;
-const QUERY_TIME_MS = 12000;
-const PAGE_SCAN = 2500;
+const QUERY_TIME_MS = 8000;
+const PAGE_SCAN = 200;
 
 const SUCCESS_CGW = ["200", "0", "00", "a", "ok", "active", "activated", "success", "successful", "succuss"];
 const ALREADY_CGW = ["9", "115"];
@@ -25,10 +26,8 @@ const toDateOnly = (value) => {
 export const resolveAdminRange = (query = {}, now = new Date()) => {
   const today = ghanaDate(now);
   const monthStart = `${today.slice(0, 7)}-01`;
-  const fromInput =
-    toDateOnly(query.fromDate || query.from || query.startDate) || monthStart;
-  const toInput =
-    toDateOnly(query.toDate || query.to || query.endDate) || fromInput || today;
+  const fromInput = toDateOnly(query.fromDate || query.from || query.startDate) || monthStart;
+  const toInput = toDateOnly(query.toDate || query.to || query.endDate) || fromInput || today;
 
   let from = fromInput || monthStart;
   let to = toInput || today;
@@ -40,8 +39,7 @@ export const resolveAdminRange = (query = {}, now = new Date()) => {
 
   const fromTime = startOfGhanaDay(from).getTime();
   const maxToTime = fromTime + (MAX_RANGE_DAYS - 1) * 24 * 60 * 60 * 1000;
-  const requestedTo = startOfGhanaDay(to).getTime();
-  if (requestedTo > maxToTime) {
+  if (startOfGhanaDay(to).getTime() > maxToTime) {
     to = ghanaDate(new Date(maxToTime));
   }
 
@@ -52,6 +50,13 @@ export const resolveAdminRange = (query = {}, now = new Date()) => {
     toDate: endOfGhanaDay(to),
   };
 };
+
+const objectIdRange = (fromDate, toDate) => ({
+  _id: {
+    $gte: mongoose.Types.ObjectId.createFromTime(Math.floor(fromDate.getTime() / 1000)),
+    $lte: mongoose.Types.ObjectId.createFromTime(Math.floor(toDate.getTime() / 1000)),
+  },
+});
 
 const normalizeStatus = (status = "", reason = "", lifecycle = "") => {
   const statusText = String(status).toLowerCase();
@@ -114,7 +119,7 @@ const mapUser = (user) => ({
   reason: "User activation",
   nextBillingDate: "",
   status: "success",
-  rawStatus: "200",
+  rawStatus: user.subscriptionStatus || "200",
   chargingAmount: Number(getOfferPlan(INITIAL_OFFER_CODE).amountGhs || 0),
   lifecycle: "SUB",
   source: "User",
@@ -132,6 +137,7 @@ const matchesReport = (event, report) => {
     if (status === "renewal" || life.startsWith("ren") || life.includes("unsub")) return false;
     return (
       status === "success" ||
+      status === "active" ||
       ["a", "200", "0", "00", "active", "activated", "ok"].includes(raw) ||
       life.startsWith("sub") ||
       life === "new"
@@ -151,47 +157,70 @@ const emptyPage = (range) => ({
   range,
 });
 
-const safeQuery = async (label, work, fallback) => {
+const safeFind = async (label, exec) => {
   try {
-    return await work();
+    return await exec();
   } catch (error) {
     console.error(`Admin ${label} failed:`, error.message);
-    return fallback;
+    return [];
   }
 };
 
-const findByTime = (model, field, fromDate, toDate, _sortField, limit) =>
-  safeQuery(
-    `${model.modelName}.${field}`,
-    () =>
-      model
-        .find({ [field]: { $gte: fromDate, $lte: toDate } })
-        .select(
-          model.modelName === "SDPLog"
-            ? "msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount createdAt callbackTimestamp channel"
-            : model.modelName === "User"
-              ? "phone subscriptionStartTime createdAt"
-              : "msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow"
-        )
-        .limit(limit)
-        .maxTimeMS(QUERY_TIME_MS)
-        .lean(),
-    []
+const SDP_SELECT =
+  "msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount createdAt callbackTimestamp channel";
+
+const findSdpNoSort = async (fromDate, toDate, limit) => {
+  const byCallback = await safeFind("SDPLog.callbackTimestamp", () =>
+    SDPLog.find({ callbackTimestamp: { $gte: fromDate, $lte: toDate } })
+      .select(SDP_SELECT)
+      .limit(limit)
+      .maxTimeMS(QUERY_TIME_MS)
+      .lean()
+  );
+  if (byCallback.length) return byCallback;
+
+  return safeFind("SDPLog._id", () =>
+    SDPLog.find(objectIdRange(fromDate, toDate))
+      .select(SDP_SELECT)
+      .limit(limit)
+      .maxTimeMS(QUERY_TIME_MS)
+      .lean()
+  );
+};
+
+const findCgwNoSort = (fromDate, toDate, limit) =>
+  safeFind("GhanaCallbackLog.createdAt", () =>
+    GhanaCallbackLog.find({ createdAt: { $gte: fromDate, $lte: toDate } })
+      .select("msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow")
+      .limit(limit)
+      .maxTimeMS(QUERY_TIME_MS)
+      .lean()
   );
 
-export const getAdminReportCounts = async (query = {}) => {
-  const range = resolveAdminRange(query);
-  return {
-    range,
-    counts: {
-      all: { total: 0 },
-      success: { total: 0 },
-      renewal: { total: 0 },
-      churn: { total: 0 },
-      failed: { total: 0 },
-    },
-  };
-};
+const findUsersNoSort = (fromDate, toDate, limit) =>
+  safeFind("User.subscriptionStartTime", () =>
+    User.find({
+      $or: [
+        { subscriptionStartTime: { $gte: fromDate, $lte: toDate } },
+        { createdAt: { $gte: fromDate, $lte: toDate } },
+      ],
+    })
+      .select("phone subscriptionStartTime createdAt subscriptionStatus")
+      .limit(limit)
+      .maxTimeMS(QUERY_TIME_MS)
+      .lean()
+  );
+
+export const getAdminReportCounts = async (query = {}) => ({
+  range: resolveAdminRange(query),
+  counts: {
+    all: { total: 0 },
+    success: { total: 0 },
+    renewal: { total: 0 },
+    churn: { total: 0 },
+    failed: { total: 0 },
+  },
+});
 
 export const getPaginatedAdminEvents = async (query = {}) => {
   const range = resolveAdminRange(query);
@@ -203,16 +232,14 @@ export const getPaginatedAdminEvents = async (query = {}) => {
     const skip = (page - 1) * limit;
     const { fromDate, toDate } = range;
 
-    const [sdpCallback, sdpCreated, cgwDocs, userDocs] = await Promise.all([
-      findByTime(SDPLog, "callbackTimestamp", fromDate, toDate, "callbackTimestamp", PAGE_SCAN),
-      findByTime(SDPLog, "createdAt", fromDate, toDate, "createdAt", PAGE_SCAN),
-      findByTime(GhanaCallbackLog, "createdAt", fromDate, toDate, "createdAt", PAGE_SCAN),
-      findByTime(User, "subscriptionStartTime", fromDate, toDate, "subscriptionStartTime", PAGE_SCAN),
+    const [sdpDocs, cgwDocs, userDocs] = await Promise.all([
+      findSdpNoSort(fromDate, toDate, PAGE_SCAN),
+      findCgwNoSort(fromDate, toDate, PAGE_SCAN),
+      findUsersNoSort(fromDate, toDate, PAGE_SCAN),
     ]);
 
     const merged = [
-      ...sdpCallback.map(mapSdp),
-      ...sdpCreated.map(mapSdp),
+      ...sdpDocs.map(mapSdp),
       ...cgwDocs.map(mapCgw),
       ...userDocs.map(mapUser),
     ].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
@@ -232,7 +259,7 @@ export const getPaginatedAdminEvents = async (query = {}) => {
       total: filtered.length,
       summaryEvents: filtered.slice(0, 200),
       counts: {
-        sdpTotal: sdpCallback.length + sdpCreated.length,
+        sdpTotal: sdpDocs.length,
         cgwTotal: cgwDocs.length,
         userTotal: userDocs.length,
         total: filtered.length,
@@ -249,40 +276,33 @@ export const loadDailySubscriptionEvents = async (from, to) => {
   const fromDate = startOfGhanaDay(from);
   const toDate = endOfGhanaDay(to);
   const dailyPlan = getOfferPlan(INITIAL_OFFER_CODE);
-
-  const [callbacks, sdpCallback, sdpCreated, users] = await Promise.all([
-    findByTime(GhanaCallbackLog, "createdAt", fromDate, toDate, "createdAt", 3000),
-    findByTime(SDPLog, "callbackTimestamp", fromDate, toDate, "callbackTimestamp", 3000),
-    findByTime(SDPLog, "createdAt", fromDate, toDate, "createdAt", 3000),
-    findByTime(User, "subscriptionStartTime", fromDate, toDate, "subscriptionStartTime", 3000),
+  const [callbacks, sdpLogs, users] = await Promise.all([
+    findCgwNoSort(fromDate, toDate, PAGE_SCAN),
+    findSdpNoSort(fromDate, toDate, PAGE_SCAN),
+    findUsersNoSort(fromDate, toDate, PAGE_SCAN),
   ]);
 
-  const events = [
-    ...callbacks.map((item) => ({
-      ...item,
-      source: item.callbackType || "CGW",
-    })),
-    ...[...sdpCallback, ...sdpCreated].map((item) => ({
-      ...item,
-      source: "SDP",
-      status: item.subscriptionStatus || item.status,
-      lifecycle: item.subscriberLifeCycle || item.lifecycle,
-      createdAt: item.callbackTimestamp || item.createdAt,
-    })),
-    ...users.map((user) => ({
-      msisdn: user.phone,
-      offerCode: INITIAL_OFFER_CODE,
-      status: "200",
-      lifecycle: "SUB",
-      source: "USER",
-      flow: "LOCAL",
-      chargingAmount: dailyPlan.amountGhs,
-      createdAt: user.subscriptionStartTime || user.createdAt,
-    })),
-  ];
-
   return {
-    events,
+    events: [
+      ...callbacks.map((item) => ({ ...item, source: item.callbackType || "CGW" })),
+      ...sdpLogs.map((item) => ({
+        ...item,
+        source: "SDP",
+        status: item.subscriptionStatus || item.status,
+        lifecycle: item.subscriberLifeCycle || item.lifecycle,
+        createdAt: item.callbackTimestamp || item.createdAt,
+      })),
+      ...users.map((user) => ({
+        msisdn: user.phone,
+        offerCode: INITIAL_OFFER_CODE,
+        status: "200",
+        lifecycle: "SUB",
+        source: "USER",
+        flow: "LOCAL",
+        chargingAmount: dailyPlan.amountGhs,
+        createdAt: user.subscriptionStartTime || user.createdAt,
+      })),
+    ],
     extras: { renewals: 0, unsub: 0 },
   };
 };

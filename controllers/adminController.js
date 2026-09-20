@@ -113,7 +113,7 @@ export const getDailySubscriptions = async (req, res) => {
 // ---------------- Users ----------------
 export const getAllUsers = async (req, res) => {
   try {
-    const users = await User.find().sort({ createdAt: -1 });
+    const users = await User.find().limit(5000).maxTimeMS(8000).lean();
     res.json({ success: true, users });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
