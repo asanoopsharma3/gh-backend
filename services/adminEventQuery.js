@@ -261,22 +261,41 @@ const mapUser = (user) => ({
   createdAt: user.subscriptionStartTime || user.createdAt,
 });
 
-const runFind = (model, filter, sort, skip, limit) =>
-  model
-    .find(filter)
-    .sort(sort)
-    .skip(skip)
-    .limit(limit)
-    .allowDiskUse(true)
-    .maxTimeMS(QUERY_TIME_MS)
-    .lean();
+const runFind = async (model, filter, sort, skip, limit) => {
+  try {
+    return await model
+      .find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .setOptions({ allowDiskUse: true })
+      .maxTimeMS(QUERY_TIME_MS)
+      .lean();
+  } catch (error) {
+    console.error(`Admin ${model.modelName} query failed:`, error.message);
+    try {
+      return await model.find(filter).limit(limit).maxTimeMS(QUERY_TIME_MS).lean();
+    } catch (fallbackError) {
+      console.error(`Admin ${model.modelName} fallback query failed:`, fallbackError.message);
+      return [];
+    }
+  }
+};
 
 const countPair = async (report, fromDate, toDate) => {
   const includeUsers = report === "success" || report === "all";
+  const countSafe = async (model, filter) => {
+    try {
+      return await model.countDocuments(filter).maxTimeMS(QUERY_TIME_MS);
+    } catch (error) {
+      console.error(`Admin ${model.modelName} count failed:`, error.message);
+      return 0;
+    }
+  };
   const [sdpTotal, cgwTotal, userTotal] = await Promise.all([
-    SDPLog.countDocuments(sdpFilterForReport(report, fromDate, toDate)),
-    GhanaCallbackLog.countDocuments(cgwFilterForReport(report, fromDate, toDate)),
-    includeUsers ? User.countDocuments(userMatchForRange(fromDate, toDate)) : Promise.resolve(0),
+    countSafe(SDPLog, sdpFilterForReport(report, fromDate, toDate)),
+    countSafe(GhanaCallbackLog, cgwFilterForReport(report, fromDate, toDate)),
+    includeUsers ? countSafe(User, userMatchForRange(fromDate, toDate)) : Promise.resolve(0),
   ]);
   return { sdpTotal, cgwTotal, userTotal, total: sdpTotal + cgwTotal + userTotal };
 };
@@ -316,7 +335,7 @@ export const getPaginatedAdminEvents = async (query = {}) => {
           .select("phone subscriptionStartTime createdAt")
           .sort({ subscriptionStartTime: -1 })
           .limit(fetchCap)
-          .allowDiskUse(true)
+          .setOptions({ allowDiskUse: true })
           .maxTimeMS(QUERY_TIME_MS)
           .lean()
       : Promise.resolve([]),
@@ -346,6 +365,43 @@ export const getPaginatedAdminEvents = async (query = {}) => {
   };
 };
 
+const safeFind = async (model, filter, options = {}) => {
+  const {
+    select,
+    sort,
+    limit = SCAN_CAP,
+  } = options;
+  try {
+    let query = model.find(filter);
+    if (select) query = query.select(select);
+    if (sort) query = query.sort(sort);
+    return await query
+      .limit(limit)
+      .setOptions({ allowDiskUse: true })
+      .maxTimeMS(QUERY_TIME_MS)
+      .lean();
+  } catch (error) {
+    console.error(`Admin ${model.modelName} scan failed:`, error.message);
+    try {
+      let query = model.find(filter);
+      if (select) query = query.select(select);
+      return await query.limit(limit).maxTimeMS(QUERY_TIME_MS).lean();
+    } catch (fallbackError) {
+      console.error(`Admin ${model.modelName} scan fallback failed:`, fallbackError.message);
+      return [];
+    }
+  }
+};
+
+const safeCount = async (model, filter) => {
+  try {
+    return await model.countDocuments(filter).maxTimeMS(QUERY_TIME_MS);
+  } catch (error) {
+    console.error(`Admin ${model.modelName} count failed:`, error.message);
+    return 0;
+  }
+};
+
 export const loadDailySubscriptionEvents = async (from, to) => {
   const fromDate = startOfGhanaDay(from);
   const toDate = endOfGhanaDay(to);
@@ -357,23 +413,23 @@ export const loadDailySubscriptionEvents = async (from, to) => {
   };
 
   const [callbacks, sdpLogs, sdpRenewals, sdpUnsubs, users] = await Promise.all([
-    GhanaCallbackLog.find({
-      createdAt: { $gte: fromDate, $lte: toDate },
-    })
-      .select("msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow rawBody rawQuery")
-      .sort({ createdAt: 1 })
-      .limit(SCAN_CAP)
-      .allowDiskUse(true)
-      .maxTimeMS(QUERY_TIME_MS)
-      .lean(),
-    SDPLog.find(sdpNewMatch)
-      .select("msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount createdAt callbackTimestamp channel rawBody rawQuery payloadJson")
-      .sort({ callbackTimestamp: 1 })
-      .limit(SCAN_CAP)
-      .allowDiskUse(true)
-      .maxTimeMS(QUERY_TIME_MS)
-      .lean(),
-    SDPLog.countDocuments({
+    safeFind(
+      GhanaCallbackLog,
+      { createdAt: { $gte: fromDate, $lte: toDate } },
+      {
+        select: "msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow rawBody rawQuery",
+        sort: { createdAt: 1 },
+      }
+    ),
+    safeFind(
+      SDPLog,
+      sdpNewMatch,
+      {
+        select: "msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount createdAt callbackTimestamp channel rawBody rawQuery payloadJson",
+        sort: { callbackTimestamp: 1 },
+      }
+    ),
+    safeCount(SDPLog, {
       $and: [
         time,
         {
@@ -385,7 +441,7 @@ export const loadDailySubscriptionEvents = async (from, to) => {
         },
       ],
     }),
-    SDPLog.countDocuments({
+    safeCount(SDPLog, {
       $and: [
         time,
         {
@@ -397,13 +453,10 @@ export const loadDailySubscriptionEvents = async (from, to) => {
         },
       ],
     }),
-    User.find(userMatchForRange(fromDate, toDate))
-      .select("phone subscriptionStartTime subscriptionStatus createdAt")
-      .sort({ subscriptionStartTime: 1 })
-      .limit(SCAN_CAP)
-      .allowDiskUse(true)
-      .maxTimeMS(QUERY_TIME_MS)
-      .lean(),
+    safeFind(User, userMatchForRange(fromDate, toDate), {
+      select: "phone subscriptionStartTime subscriptionStatus createdAt",
+      sort: { subscriptionStartTime: 1 },
+    }),
   ]);
 
   const events = [

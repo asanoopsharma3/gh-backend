@@ -62,8 +62,36 @@ const getDailySubscriptionReport = async (query = {}) => {
   };
 };
 
+const wantsDailyView = (query = {}) => {
+  const view = String(query.view || query.reportType || "").toLowerCase();
+  return (
+    query.includeDaily === "1" ||
+    query.includeDaily === "true" ||
+    view === "daily" ||
+    view === "daily-subscriptions" ||
+    view === "new"
+  );
+};
+
 export const getAdminDashboard = async (req, res) => {
   try {
+    if (wantsDailyView(req.query)) {
+      try {
+        const dailySubscriptions = await getDailySubscriptionReport(req.query);
+        return res.json({ success: true, ...dailySubscriptions });
+      } catch (dailyError) {
+        console.error("Daily view via dashboard failed:", dailyError);
+        const pageData = await getPaginatedAdminEvents({ ...req.query, report: "all", limit: 500 });
+        return res.json({
+          success: true,
+          data: pageData.events,
+          total: pageData.total,
+          range: pageData.range,
+          warning: dailyError.message,
+        });
+      }
+    }
+
     const pageData = await getPaginatedAdminEvents(req.query);
     const summary = await buildSummary(req.query, pageData);
     res.json({
@@ -96,7 +124,17 @@ export const getDailySubscriptions = async (req, res) => {
     res.json({ success: true, ...dailySubscriptions });
   } catch (err) {
     console.error("Daily subscriptions error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    try {
+      const range = resolveReportRange(req.query);
+      const fallback = buildDailySubscriptionReport([], range);
+      return res.json({
+        success: true,
+        ...fallback,
+        warning: err.message,
+      });
+    } catch (fallbackError) {
+      res.status(500).json({ success: false, message: err.message || fallbackError.message });
+    }
   }
 };
 

@@ -11,20 +11,27 @@ export const HE_REDIRECT_URL = process.env.CGW_HE_REDIRECT_URL || CALLBACK_URL;
 export const OFFER_CODE = process.env.CGW_OFFER_CODE || "9923310010";
 export const INITIAL_OFFER_CODE = process.env.CGW_INITIAL_OFFER_CODE || OFFER_CODE;
 export const TOPUP_OFFER_CODE = process.env.CGW_TOPUP_OFFER_CODE || "9923310009";
-export const DAILY_PLAN_AMOUNT_GHS = Number(process.env.CGW_DAILY_AMOUNT_GHS || 1);
-export const TOPUP_PLAN_AMOUNT_GHS = Number(process.env.CGW_TOPUP_AMOUNT_GHS || 1);
+const toCatalogGhs = (value, fallback = 1) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  if (numeric >= 50) return Number((numeric / 100).toFixed(2));
+  return Number(numeric.toFixed(2));
+};
+
+export const DAILY_PLAN_AMOUNT_GHS = toCatalogGhs(process.env.CGW_DAILY_AMOUNT_GHS || 1, 1);
+export const TOPUP_PLAN_AMOUNT_GHS = toCatalogGhs(process.env.CGW_TOPUP_AMOUNT_GHS || 1, 1);
 
 export const OFFER_CATALOG = {
   [INITIAL_OFFER_CODE]: {
     code: INITIAL_OFFER_CODE,
     name: "Daily Subscription",
-    amountGhs: Number.isFinite(DAILY_PLAN_AMOUNT_GHS) ? DAILY_PLAN_AMOUNT_GHS : 1,
+    amountGhs: DAILY_PLAN_AMOUNT_GHS,
     billing: "daily",
   },
   [TOPUP_OFFER_CODE]: {
     code: TOPUP_OFFER_CODE,
     name: "Daily Top-up",
-    amountGhs: Number.isFinite(TOPUP_PLAN_AMOUNT_GHS) ? TOPUP_PLAN_AMOUNT_GHS : 1,
+    amountGhs: TOPUP_PLAN_AMOUNT_GHS,
     billing: "one-time",
   },
 };
