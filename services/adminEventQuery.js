@@ -9,16 +9,13 @@ import {
 import { INITIAL_OFFER_CODE, getOfferPlan } from "../config/cgwconfig.js";
 
 const MAX_RANGE_DAYS = 31;
-const QUERY_TIME_MS = 20000;
-const SCAN_CAP = 25000;
+const QUERY_TIME_MS = 12000;
+const PAGE_SCAN = 2500;
 
 const SUCCESS_CGW = ["200", "0", "00", "a", "ok", "active", "activated", "success", "successful", "succuss"];
 const ALREADY_CGW = ["9", "115"];
 const FAILED_CGW = ["1", "11", "12", "13", "91", "112", "150", "186", "644", "1316", "d", "s"];
 const CHURN_CGW = ["2", "26", "29", "55", "63", "111", "g"];
-
-const withCasing = (values) =>
-  [...new Set(values.flatMap((value) => [value, String(value).toUpperCase(), String(value).toLowerCase()]))];
 
 const toDateOnly = (value) => {
   const text = String(value || "").slice(0, 10);
@@ -29,18 +26,23 @@ export const resolveAdminRange = (query = {}, now = new Date()) => {
   const today = ghanaDate(now);
   const monthStart = `${today.slice(0, 7)}-01`;
   const fromInput =
-    toDateOnly(query.fromDate || query.from || query.startDate || query.date) || monthStart;
+    toDateOnly(query.fromDate || query.from || query.startDate) || monthStart;
   const toInput =
-    toDateOnly(query.toDate || query.to || query.endDate || query.date || fromInput) || today;
+    toDateOnly(query.toDate || query.to || query.endDate) || fromInput || today;
 
-  let from = fromInput <= toInput ? fromInput : toInput;
-  let to = fromInput <= toInput ? toInput : fromInput;
+  let from = fromInput || monthStart;
+  let to = toInput || today;
+  if (from > to) {
+    const swap = from;
+    from = to;
+    to = swap;
+  }
 
   const fromTime = startOfGhanaDay(from).getTime();
-  const toTime = startOfGhanaDay(to).getTime();
-  const maxMs = (MAX_RANGE_DAYS - 1) * 24 * 60 * 60 * 1000;
-  if (toTime - fromTime > maxMs) {
-    from = ghanaDate(new Date(toTime - maxMs));
+  const maxToTime = fromTime + (MAX_RANGE_DAYS - 1) * 24 * 60 * 60 * 1000;
+  const requestedTo = startOfGhanaDay(to).getTime();
+  if (requestedTo > maxToTime) {
+    to = ghanaDate(new Date(maxToTime));
   }
 
   return {
@@ -50,146 +52,6 @@ export const resolveAdminRange = (query = {}, now = new Date()) => {
     toDate: endOfGhanaDay(to),
   };
 };
-
-const timeWindow = (fromDate, toDate) => ({
-  $or: [
-    { callbackTimestamp: { $gte: fromDate, $lte: toDate } },
-    { createdAt: { $gte: fromDate, $lte: toDate } },
-    { updatedAt: { $gte: fromDate, $lte: toDate } },
-  ],
-});
-
-const sdpNewActivation = {
-  $or: [
-    { subscriberLifeCycle: { $regex: /^(sub|new)/i } },
-    { lifecycle: { $regex: /^(sub|new)/i } },
-    { command: { $regex: /^(sub|subscribe|activate)/i } },
-    {
-      subscriptionStatus: {
-        $in: withCasing(["A", "200", "0", "00", "success", "successful", "active"]),
-      },
-    },
-    {
-      status: {
-        $in: withCasing(["A", "200", "0", "00", "success", "successful", "active"]),
-      },
-    },
-  ],
-};
-
-const sdpNotRenewalOrUnsub = {
-  subscriberLifeCycle: { $not: /ren|unsub/i },
-};
-
-const sdpFilterForReport = (report, fromDate, toDate) => {
-  const time = timeWindow(fromDate, toDate);
-  if (report === "renewal") {
-    return {
-      $and: [
-        time,
-        {
-          $or: [
-            { subscriberLifeCycle: { $regex: /^ren/i } },
-            { lifecycle: { $regex: /^ren/i } },
-            { command: { $regex: /renew/i } },
-            { normalizedStatus: "renewal" },
-          ],
-        },
-      ],
-    };
-  }
-  if (report === "success") {
-    return {
-      $and: [time, sdpNotRenewalOrUnsub, sdpNewActivation],
-    };
-  }
-  if (report === "churn") {
-    return {
-      $and: [
-        time,
-        {
-          $or: [
-            { subscriptionStatus: { $in: withCasing(CHURN_CGW) } },
-            { status: { $in: withCasing(CHURN_CGW) } },
-            { reason: { $regex: /insufficient|low balance|churn/i } },
-            { normalizedStatus: "churn" },
-          ],
-        },
-      ],
-    };
-  }
-  if (report === "failed") {
-    return {
-      $and: [
-        time,
-        {
-          $or: [
-            { subscriptionStatus: { $in: withCasing([...FAILED_CGW, "D", "S", "INACTIVE", "UNSUB"]) } },
-            { subscriberLifeCycle: { $regex: /^unsub/i } },
-            { lifecycle: { $regex: /^unsub/i } },
-            { command: { $regex: /unsub/i } },
-            { normalizedStatus: "failed" },
-          ],
-        },
-      ],
-    };
-  }
-  return time;
-};
-
-const cgwFilterForReport = (report, fromDate, toDate) => {
-  const createdAt = { createdAt: { $gte: fromDate, $lte: toDate }, callbackType: { $ne: "SDP" } };
-  if (report === "renewal") {
-    return { ...createdAt, $or: [{ lifecycle: { $regex: /^ren/i } }, { normalizedStatus: "renewal" }] };
-  }
-  if (report === "success") {
-    return {
-      ...createdAt,
-      $or: [
-        { status: { $in: withCasing([...SUCCESS_CGW, ...ALREADY_CGW]) } },
-        { normalizedStatus: "success" },
-      ],
-    };
-  }
-  if (report === "churn") {
-    return {
-      ...createdAt,
-      $or: [
-        { status: { $in: withCasing(CHURN_CGW) } },
-        { normalizedStatus: "churn" },
-        { reason: { $regex: /insufficient|low balance|churn/i } },
-      ],
-    };
-  }
-  if (report === "failed") {
-    return {
-      ...createdAt,
-      $or: [
-        { status: { $in: withCasing(FAILED_CGW) } },
-        { normalizedStatus: "failed" },
-      ],
-    };
-  }
-  return createdAt;
-};
-
-const userMatchForRange = (fromDate, toDate) => ({
-  $or: [
-    { subscriptionStartTime: { $gte: fromDate, $lte: toDate } },
-    {
-      $and: [
-        {
-          $or: [
-            { subscriptionStartTime: { $exists: false } },
-            { subscriptionStartTime: null },
-          ],
-        },
-        { createdAt: { $gte: fromDate, $lte: toDate } },
-        { subscriptionStatus: "active" },
-      ],
-    },
-  ],
-});
 
 const normalizeStatus = (status = "", reason = "", lifecycle = "") => {
   const statusText = String(status).toLowerCase();
@@ -261,202 +123,138 @@ const mapUser = (user) => ({
   createdAt: user.subscriptionStartTime || user.createdAt,
 });
 
-const runFind = async (model, filter, sort, skip, limit) => {
+const matchesReport = (event, report) => {
+  if (!report || report === "all") return true;
+  const status = String(event.status || "").toLowerCase();
+  const raw = String(event.rawStatus || "").toLowerCase();
+  const life = String(event.lifecycle || "").toLowerCase();
+  if (report === "success") {
+    if (status === "renewal" || life.startsWith("ren") || life.includes("unsub")) return false;
+    return (
+      status === "success" ||
+      ["a", "200", "0", "00", "active", "activated", "ok"].includes(raw) ||
+      life.startsWith("sub") ||
+      life === "new"
+    );
+  }
+  if (report === "renewal") return status === "renewal" || life.startsWith("ren");
+  if (report === "churn") return status === "churn";
+  if (report === "failed") return status === "failed" || life.includes("unsub");
+  return status === report;
+};
+
+const emptyPage = (range) => ({
+  events: [],
+  total: 0,
+  summaryEvents: [],
+  counts: { sdpTotal: 0, cgwTotal: 0, userTotal: 0, total: 0 },
+  range,
+});
+
+const safeQuery = async (label, work, fallback) => {
   try {
-    return await model
-      .find(filter)
-      .sort(sort)
-      .skip(skip)
-      .limit(limit)
-      .setOptions({ allowDiskUse: true })
-      .maxTimeMS(QUERY_TIME_MS)
-      .lean();
+    return await work();
   } catch (error) {
-    console.error(`Admin ${model.modelName} query failed:`, error.message);
-    try {
-      return await model.find(filter).limit(limit).maxTimeMS(QUERY_TIME_MS).lean();
-    } catch (fallbackError) {
-      console.error(`Admin ${model.modelName} fallback query failed:`, fallbackError.message);
-      return [];
-    }
+    console.error(`Admin ${label} failed:`, error.message);
+    return fallback;
   }
 };
 
-const countPair = async (report, fromDate, toDate) => {
-  const includeUsers = report === "success" || report === "all";
-  const countSafe = async (model, filter) => {
-    try {
-      return await model.countDocuments(filter).maxTimeMS(QUERY_TIME_MS);
-    } catch (error) {
-      console.error(`Admin ${model.modelName} count failed:`, error.message);
-      return 0;
-    }
-  };
-  const [sdpTotal, cgwTotal, userTotal] = await Promise.all([
-    countSafe(SDPLog, sdpFilterForReport(report, fromDate, toDate)),
-    countSafe(GhanaCallbackLog, cgwFilterForReport(report, fromDate, toDate)),
-    includeUsers ? countSafe(User, userMatchForRange(fromDate, toDate)) : Promise.resolve(0),
-  ]);
-  return { sdpTotal, cgwTotal, userTotal, total: sdpTotal + cgwTotal + userTotal };
-};
+const findByTime = (model, field, fromDate, toDate, _sortField, limit) =>
+  safeQuery(
+    `${model.modelName}.${field}`,
+    () =>
+      model
+        .find({ [field]: { $gte: fromDate, $lte: toDate } })
+        .select(
+          model.modelName === "SDPLog"
+            ? "msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount createdAt callbackTimestamp channel"
+            : model.modelName === "User"
+              ? "phone subscriptionStartTime createdAt"
+              : "msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow"
+        )
+        .limit(limit)
+        .maxTimeMS(QUERY_TIME_MS)
+        .lean(),
+    []
+  );
 
 export const getAdminReportCounts = async (query = {}) => {
   const range = resolveAdminRange(query);
-  const { fromDate, toDate } = range;
-  const keys = ["all", "success", "renewal", "churn", "failed"];
-  const entries = await Promise.all(keys.map(async (key) => [key, await countPair(key, fromDate, toDate)]));
   return {
     range,
-    counts: Object.fromEntries(entries),
+    counts: {
+      all: { total: 0 },
+      success: { total: 0 },
+      renewal: { total: 0 },
+      churn: { total: 0 },
+      failed: { total: 0 },
+    },
   };
 };
 
 export const getPaginatedAdminEvents = async (query = {}) => {
   const range = resolveAdminRange(query);
-  const report = query.report || "all";
-  const page = Math.max(1, Number(query.page) || 1);
-  const requested = Math.max(1, Number(query.limit) || 10);
-  const limit = Math.min(requested > 50 ? 200 : 50, requested);
-  const skip = (page - 1) * limit;
-  const { fromDate, toDate } = range;
-
-  const sdpMatch = sdpFilterForReport(report, fromDate, toDate);
-  const cgwMatch = cgwFilterForReport(report, fromDate, toDate);
-  const includeUsers = report === "success" || report === "all";
-  const userMatch = userMatchForRange(fromDate, toDate);
-  const fetchCap = Math.min(SCAN_CAP, skip + limit);
-
-  const [counts, sdpDocs, cgwDocs, userDocs] = await Promise.all([
-    countPair(report, fromDate, toDate),
-    runFind(SDPLog, sdpMatch, { callbackTimestamp: -1 }, 0, fetchCap),
-    runFind(GhanaCallbackLog, cgwMatch, { createdAt: -1 }, 0, fetchCap),
-    includeUsers
-      ? User.find(userMatch)
-          .select("phone subscriptionStartTime createdAt")
-          .sort({ subscriptionStartTime: -1 })
-          .limit(fetchCap)
-          .setOptions({ allowDiskUse: true })
-          .maxTimeMS(QUERY_TIME_MS)
-          .lean()
-      : Promise.resolve([]),
-  ]);
-
-  const merged = [
-    ...sdpDocs.map(mapSdp),
-    ...cgwDocs.map(mapCgw),
-    ...userDocs.map(mapUser),
-  ].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-
-  const uniqueKeys = new Set();
-  const deduped = [];
-  for (const event of merged) {
-    const key = `${event.source}|${event.id || event.msisdn}|${event.createdAt || ""}`;
-    if (uniqueKeys.has(key)) continue;
-    uniqueKeys.add(key);
-    deduped.push(event);
-  }
-
-  return {
-    events: deduped.slice(skip, skip + limit),
-    total: counts.total,
-    summaryEvents: deduped.slice(0, 200),
-    counts,
-    range,
-  };
-};
-
-const safeFind = async (model, filter, options = {}) => {
-  const {
-    select,
-    sort,
-    limit = SCAN_CAP,
-  } = options;
   try {
-    let query = model.find(filter);
-    if (select) query = query.select(select);
-    if (sort) query = query.sort(sort);
-    return await query
-      .limit(limit)
-      .setOptions({ allowDiskUse: true })
-      .maxTimeMS(QUERY_TIME_MS)
-      .lean();
-  } catch (error) {
-    console.error(`Admin ${model.modelName} scan failed:`, error.message);
-    try {
-      let query = model.find(filter);
-      if (select) query = query.select(select);
-      return await query.limit(limit).maxTimeMS(QUERY_TIME_MS).lean();
-    } catch (fallbackError) {
-      console.error(`Admin ${model.modelName} scan fallback failed:`, fallbackError.message);
-      return [];
+    const report = query.report || "all";
+    const page = Math.max(1, Number(query.page) || 1);
+    const requested = Math.max(1, Number(query.limit) || 10);
+    const limit = Math.min(50, requested);
+    const skip = (page - 1) * limit;
+    const { fromDate, toDate } = range;
+
+    const [sdpCallback, sdpCreated, cgwDocs, userDocs] = await Promise.all([
+      findByTime(SDPLog, "callbackTimestamp", fromDate, toDate, "callbackTimestamp", PAGE_SCAN),
+      findByTime(SDPLog, "createdAt", fromDate, toDate, "createdAt", PAGE_SCAN),
+      findByTime(GhanaCallbackLog, "createdAt", fromDate, toDate, "createdAt", PAGE_SCAN),
+      findByTime(User, "subscriptionStartTime", fromDate, toDate, "subscriptionStartTime", PAGE_SCAN),
+    ]);
+
+    const merged = [
+      ...sdpCallback.map(mapSdp),
+      ...sdpCreated.map(mapSdp),
+      ...cgwDocs.map(mapCgw),
+      ...userDocs.map(mapUser),
+    ].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+    const uniqueKeys = new Set();
+    const deduped = [];
+    for (const event of merged) {
+      const key = `${event.source}|${event.id || event.msisdn}|${event.createdAt || ""}`;
+      if (uniqueKeys.has(key)) continue;
+      uniqueKeys.add(key);
+      deduped.push(event);
     }
-  }
-};
 
-const safeCount = async (model, filter) => {
-  try {
-    return await model.countDocuments(filter).maxTimeMS(QUERY_TIME_MS);
+    const filtered = deduped.filter((event) => matchesReport(event, report));
+    return {
+      events: filtered.slice(skip, skip + limit),
+      total: filtered.length,
+      summaryEvents: filtered.slice(0, 200),
+      counts: {
+        sdpTotal: sdpCallback.length + sdpCreated.length,
+        cgwTotal: cgwDocs.length,
+        userTotal: userDocs.length,
+        total: filtered.length,
+      },
+      range,
+    };
   } catch (error) {
-    console.error(`Admin ${model.modelName} count failed:`, error.message);
-    return 0;
+    console.error("getPaginatedAdminEvents failed:", error.message);
+    return emptyPage(range);
   }
 };
 
 export const loadDailySubscriptionEvents = async (from, to) => {
   const fromDate = startOfGhanaDay(from);
   const toDate = endOfGhanaDay(to);
-  const time = timeWindow(fromDate, toDate);
   const dailyPlan = getOfferPlan(INITIAL_OFFER_CODE);
 
-  const sdpNewMatch = {
-    $and: [time, sdpNotRenewalOrUnsub, sdpNewActivation],
-  };
-
-  const [callbacks, sdpLogs, sdpRenewals, sdpUnsubs, users] = await Promise.all([
-    safeFind(
-      GhanaCallbackLog,
-      { createdAt: { $gte: fromDate, $lte: toDate } },
-      {
-        select: "msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow rawBody rawQuery",
-        sort: { createdAt: 1 },
-      }
-    ),
-    safeFind(
-      SDPLog,
-      sdpNewMatch,
-      {
-        select: "msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount createdAt callbackTimestamp channel rawBody rawQuery payloadJson",
-        sort: { callbackTimestamp: 1 },
-      }
-    ),
-    safeCount(SDPLog, {
-      $and: [
-        time,
-        {
-          $or: [
-            { subscriberLifeCycle: { $regex: /^ren/i } },
-            { lifecycle: { $regex: /^ren/i } },
-            { command: { $regex: /renew/i } },
-          ],
-        },
-      ],
-    }),
-    safeCount(SDPLog, {
-      $and: [
-        time,
-        {
-          $or: [
-            { subscriberLifeCycle: { $regex: /^unsub/i } },
-            { lifecycle: { $regex: /^unsub/i } },
-            { command: { $regex: /unsub/i } },
-          ],
-        },
-      ],
-    }),
-    safeFind(User, userMatchForRange(fromDate, toDate), {
-      select: "phone subscriptionStartTime subscriptionStatus createdAt",
-      sort: { subscriptionStartTime: 1 },
-    }),
+  const [callbacks, sdpCallback, sdpCreated, users] = await Promise.all([
+    findByTime(GhanaCallbackLog, "createdAt", fromDate, toDate, "createdAt", 3000),
+    findByTime(SDPLog, "callbackTimestamp", fromDate, toDate, "callbackTimestamp", 3000),
+    findByTime(SDPLog, "createdAt", fromDate, toDate, "createdAt", 3000),
+    findByTime(User, "subscriptionStartTime", fromDate, toDate, "subscriptionStartTime", 3000),
   ]);
 
   const events = [
@@ -464,7 +262,7 @@ export const loadDailySubscriptionEvents = async (from, to) => {
       ...item,
       source: item.callbackType || "CGW",
     })),
-    ...sdpLogs.map((item) => ({
+    ...[...sdpCallback, ...sdpCreated].map((item) => ({
       ...item,
       source: "SDP",
       status: item.subscriptionStatus || item.status,
@@ -485,9 +283,6 @@ export const loadDailySubscriptionEvents = async (from, to) => {
 
   return {
     events,
-    extras: {
-      renewals: sdpRenewals,
-      unsub: sdpUnsubs,
-    },
+    extras: { renewals: 0, unsub: 0 },
   };
 };

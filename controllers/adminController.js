@@ -7,42 +7,32 @@ import {
   resolveReportRange,
 } from "../services/dailySubscriptionReport.js";
 import {
-  getAdminReportCounts,
   getPaginatedAdminEvents,
   loadDailySubscriptionEvents,
 } from "../services/adminEventQuery.js";
 
-const catalogDailyPrice = 1;
-
 const buildSummary = async (query, pageData) => {
-  const [reportCounts, activeSubscriptions, totalUsers] = await Promise.all([
-    getAdminReportCounts(query),
-    User.countDocuments({ subscriptionStatus: "active" }),
-    User.countDocuments(),
+  const events = pageData.summaryEvents || pageData.events || [];
+  const [activeSubscriptions, totalUsers] = await Promise.all([
+    User.countDocuments({ subscriptionStatus: "active" }).maxTimeMS(8000).catch(() => 0),
+    User.countDocuments().maxTimeMS(8000).catch(() => 0),
   ]);
-  const counts = reportCounts.counts;
-  const billedEvents = Number(counts.success?.total || 0) + Number(counts.renewal?.total || 0);
 
   return {
-    totalEvents: Number(counts.all?.total || pageData.total || 0),
-    totalSubscribers: Number(counts.success?.total || 0),
+    totalEvents: Number(pageData.total || events.length || 0),
+    totalSubscribers: Number(pageData.total || 0),
     totalUsers,
-    success: Number(counts.success?.total || 0),
-    renewals: Number(counts.renewal?.total || 0),
-    churn: Number(counts.churn?.total || 0),
-    failed: Number(counts.failed?.total || 0),
+    success: events.filter((item) => item.status === "success").length,
+    renewals: events.filter((item) => item.status === "renewal").length,
+    churn: events.filter((item) => item.status === "churn").length,
+    failed: events.filter((item) => item.status === "failed").length,
     heStarted: 0,
     nheStarted: 0,
-    totalGhsAmount: billedEvents * catalogDailyPrice,
+    totalGhsAmount: events
+      .filter((item) => item.status === "success" || item.status === "renewal")
+      .reduce((sum, item) => sum + (Number(item.chargingAmount) >= 50 ? Number(item.chargingAmount) / 100 : Number(item.chargingAmount || 0)), 0),
     activeSubscriptions,
     questionsUsedToday: 0,
-    sources: {
-      success: counts.success,
-      renewal: counts.renewal,
-      churn: counts.churn,
-      failed: counts.failed,
-      all: counts.all,
-    },
   };
 };
 
@@ -62,36 +52,8 @@ const getDailySubscriptionReport = async (query = {}) => {
   };
 };
 
-const wantsDailyView = (query = {}) => {
-  const view = String(query.view || query.reportType || "").toLowerCase();
-  return (
-    query.includeDaily === "1" ||
-    query.includeDaily === "true" ||
-    view === "daily" ||
-    view === "daily-subscriptions" ||
-    view === "new"
-  );
-};
-
 export const getAdminDashboard = async (req, res) => {
   try {
-    if (wantsDailyView(req.query)) {
-      try {
-        const dailySubscriptions = await getDailySubscriptionReport(req.query);
-        return res.json({ success: true, ...dailySubscriptions });
-      } catch (dailyError) {
-        console.error("Daily view via dashboard failed:", dailyError);
-        const pageData = await getPaginatedAdminEvents({ ...req.query, report: "all", limit: 500 });
-        return res.json({
-          success: true,
-          data: pageData.events,
-          total: pageData.total,
-          range: pageData.range,
-          warning: dailyError.message,
-        });
-      }
-    }
-
     const pageData = await getPaginatedAdminEvents(req.query);
     const summary = await buildSummary(req.query, pageData);
     res.json({
@@ -104,7 +66,22 @@ export const getAdminDashboard = async (req, res) => {
     });
   } catch (err) {
     console.error("Admin dashboard error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.json({
+      success: true,
+      summary: {
+        totalEvents: 0,
+        totalSubscribers: 0,
+        success: 0,
+        renewals: 0,
+        churn: 0,
+        failed: 0,
+        totalGhsAmount: 0,
+      },
+      data: [],
+      total: 0,
+      warning: err.message,
+      subscriptionUsage: [],
+    });
   }
 };
 
@@ -114,7 +91,7 @@ export const getAdminSubscriptions = async (req, res) => {
     res.json({ success: true, data: events, total, range });
   } catch (err) {
     console.error("Admin subscriptions error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.json({ success: true, data: [], total: 0, warning: err.message });
   }
 };
 
@@ -124,17 +101,12 @@ export const getDailySubscriptions = async (req, res) => {
     res.json({ success: true, ...dailySubscriptions });
   } catch (err) {
     console.error("Daily subscriptions error:", err);
-    try {
-      const range = resolveReportRange(req.query);
-      const fallback = buildDailySubscriptionReport([], range);
-      return res.json({
-        success: true,
-        ...fallback,
-        warning: err.message,
-      });
-    } catch (fallbackError) {
-      res.status(500).json({ success: false, message: err.message || fallbackError.message });
-    }
+    const range = resolveReportRange(req.query);
+    res.json({
+      success: true,
+      ...buildDailySubscriptionReport([], range),
+      warning: err.message,
+    });
   }
 };
 
