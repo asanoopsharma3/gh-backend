@@ -100,6 +100,8 @@ if (process.env.NODE_ENV === "production" && hasFrontendBuild) {
     if (
       req.method === "GET" &&
       !req.path.startsWith("/api/") &&
+      !req.path.startsWith("/admin-api") &&
+      !req.path.startsWith("/cgw") &&
       req.accepts("html")
     ) {
       return res.sendFile(indexHtmlPath);

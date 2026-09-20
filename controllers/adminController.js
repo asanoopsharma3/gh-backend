@@ -1,341 +1,77 @@
 import User from "../models/User.js";
 import Quiz from "../models/Quiz.js";
-import GhanaCallbackLog from "../models/GhanaCallbackLog.js";
-import SDPLog from "../models/SDPLog.js";
 import csv from "csv-parser";
 import fs from "fs";
 import {
   buildDailySubscriptionReport,
-  endOfGhanaDay,
   resolveReportRange,
-  startOfGhanaDay,
 } from "../services/dailySubscriptionReport.js";
 import {
-  INITIAL_OFFER_CODE,
-  getOfferPlan,
-} from "../config/cgwconfig.js";
+  getAdminReportCounts,
+  getPaginatedAdminEvents,
+  loadDailySubscriptionEvents,
+} from "../services/adminEventQuery.js";
 
-const startOfDay = (date) => {
-  const value = new Date(date);
-  value.setHours(0, 0, 0, 0);
-  return value;
-};
+const catalogDailyPrice = 1;
 
-const endOfDay = (date) => {
-  const value = new Date(date);
-  value.setHours(23, 59, 59, 999);
-  return value;
-};
-
-const DASHBOARD_SCAN_LIMIT = 500;
-const MAX_DASHBOARD_RANGE_DAYS = 31;
-
-const toDateOnly = (value) => {
-  const text = String(value || "").slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
-};
-
-const resolveDashboardRange = (query = {}) => {
-  const today = new Date();
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  const fromInput = toDateOnly(query.fromDate || query.from || query.date);
-  const toInput = toDateOnly(query.toDate || query.to || query.date || fromInput);
-  let from = fromInput ? startOfDay(fromInput) : startOfDay(monthStart);
-  let to = toInput ? endOfDay(toInput) : endOfDay(today);
-
-  if (from > to) {
-    const swap = from;
-    from = startOfDay(to);
-    to = endOfDay(swap);
-  }
-
-  const maxFrom = new Date(to.getTime() - MAX_DASHBOARD_RANGE_DAYS * 24 * 60 * 60 * 1000);
-  if (from < maxFrom) from = maxFrom;
-
-  return { from, to };
-};
-
-const createdAtFilter = (from, to) => ({
-  createdAt: { $gte: from, $lte: to },
-});
-
-const safeSortedFind = (model, filter, sort = { createdAt: -1 }, limit = DASHBOARD_SCAN_LIMIT) =>
-  model
-    .find(filter)
-    .sort(sort)
-    .allowDiskUse(true)
-    .limit(limit)
-    .maxTimeMS(12000)
-    .lean();
-
-const pickFirst = (...values) =>
-  values.find((value) => value !== undefined && value !== null && value !== "") || "";
-
-const getNested = (source, paths) => {
-  for (const path of paths) {
-    const value = path.split(".").reduce((obj, part) => (obj ? obj[part] : undefined), source);
-    if (value !== undefined && value !== null && value !== "") return value;
-  }
-  return "";
-};
-
-const normalizeStatus = (status = "", reason = "", lifecycle = "") => {
-  const statusText = String(status).toLowerCase();
-  const reasonText = String(reason).toLowerCase();
-  const lifecycleText = String(lifecycle).toLowerCase();
-
-  if (
-    reasonText.includes("insufficient") ||
-    reasonText.includes("low balance") ||
-    reasonText.includes("churn") ||
-    ["2", "26", "29", "55", "63", "111"].includes(statusText)
-  ) {
-    return "churn";
-  }
-
-  if (lifecycleText.includes("ren") || reasonText.includes("renew")) return "renewal";
-  if (
-    ["success", "successful", "active", "a", "200", "9", "115"].includes(statusText) ||
-    statusText.replace(/[\s_-]+/g, "").includes("alreadysubscrib") ||
-    (statusText.includes("already") && statusText.includes("subscrib"))
-  ) {
-    return "success";
-  }
-  if (["failed", "failure", "fail", "deactivated", "d", "suspended", "s", "1", "11", "12", "13", "91", "112", "150", "186", "644"].includes(statusText)) {
-    return "failed";
-  }
-
-  return statusText || "unknown";
-};
-
-const normalizeEvent = (item, source = "Ghana Callback") => {
-  const raw = item.rawResponse || item.rawQuery || item.rawBody || item.rawData || {};
-  const reason = pickFirst(
-    item.reason,
-    item.resultMessage,
-    getNested(raw, ["reason", "Reason", "message", "Message", "statusMessage", "status_message"])
-  );
-  const lifecycle = pickFirst(item.lifecycle, getNested(raw, ["lifecycle", "Lifecycle", "event", "Event"]));
-  const statusValue = pickFirst(item.status, item.resultCode, getNested(raw, ["status", "Status", "resultCode"]));
-  const status = normalizeStatus(statusValue, reason, lifecycle);
-  const msisdn = pickFirst(item.msisdn, item.phone, getNested(raw, ["msisdn", "MSISDN", "ani", "phone", "mobileNumber"]));
-  const amount = Number(
-    pickFirst(item.chargeAmount, getNested(raw, ["chargingAmount", "charging_amount", "amount", "Amount", "chargeAmount"]))
-  ) || 0;
-
-  return {
-    id: String(item._id || item.cgid || item.referenceId || item.transactionId || ""),
-    msisdn,
-    offerCode: pickFirst(item.offerCode, getNested(raw, ["offerCode", "OfferCode", "offerid", "offerId"])),
-    reason: reason || "-",
-    nextBillingDate: pickFirst(getNested(raw, ["nextBillingDate", "next_billing_date", "NextBillingDate"])),
-    status,
-    rawStatus: statusValue || "-",
-    chargingAmount: amount,
-    lifecycle: lifecycle || "-",
-    source,
-    createdAt: item.createdAt || item.updatedAt,
-  };
-};
-
-const matchesReport = (item, report) => {
-  if (!report || report === "all") return true;
-  if (report === "success") return item.status === "success";
-  if (report === "renewal") return item.status === "renewal";
-  if (report === "churn") return item.status === "churn";
-  if (report === "failed") return item.status === "failed";
-  return true;
-};
-
-const matchesSearch = (item, search = "") => {
-  const term = search.trim().toLowerCase();
-  if (!term) return true;
-  return [item.msisdn, item.offerCode, item.status, item.rawStatus, item.reason, item.source, item.lifecycle]
-    .some((value) => String(value || "").toLowerCase().includes(term));
-};
-
-const getAdminEvents = async (query = {}) => {
-  const { from, to } = resolveDashboardRange(query);
-  const filter = createdAtFilter(from, to);
-  const report = query.report;
-  const search = query.search;
-  const page = Math.max(1, Number(query.page) || 1);
-  const limit = Math.min(
-    Number(query.limit) > 50 ? 500 : 50,
-    Math.max(1, Number(query.limit) || 10)
-  );
-  const scanLimit = Math.min(DASHBOARD_SCAN_LIMIT, Math.max(limit * page, 100));
-
-  const [callbacks, sdpLogs] = await Promise.all([
-    safeSortedFind(
-      GhanaCallbackLog,
-      { ...filter, callbackType: { $ne: "SDP" } },
-      { createdAt: -1 },
-      scanLimit
-    ),
-    safeSortedFind(SDPLog, filter, { createdAt: -1 }, scanLimit).catch(() =>
-      safeSortedFind(
-        SDPLog,
-        { callbackTimestamp: filter.createdAt },
-        { callbackTimestamp: -1 },
-        scanLimit
-      )
-    ),
+const buildSummary = async (query, pageData) => {
+  const [reportCounts, activeSubscriptions, totalUsers] = await Promise.all([
+    getAdminReportCounts(query),
+    User.countDocuments({ subscriptionStatus: "active" }),
+    User.countDocuments(),
   ]);
-
-  const cgwEvents = callbacks.map((item) => ({
-    id: String(item._id || item.cgid || ""),
-    msisdn: item.msisdn || "",
-    offerCode: item.offerCode || "",
-    reason: item.reason || "-",
-    nextBillingDate: "",
-    status: item.normalizedStatus || normalizeStatus(item.status, item.reason, item.lifecycle),
-    rawStatus: item.status || "-",
-    chargingAmount: Number(item.chargingAmount || 0),
-    lifecycle: item.lifecycle || "-",
-    source: item.callbackType === "SDP" ? "SDP Callback" : "CGW Callback",
-    flow: item.flow || "UNKNOWN",
-    cgid: item.cgid || "",
-    createdAt: item.createdAt || item.updatedAt,
-  }));
-
-  const sdpEvents = sdpLogs.map((item) => ({
-    id: String(item._id || item.transactionId || item.requestId || ""),
-    msisdn: item.msisdn || "",
-    offerCode: item.offerCode || item.planId || "",
-    reason: item.reason || "-",
-    nextBillingDate: item.nextBillingDate || "",
-    status:
-      item.normalizedStatus ||
-      normalizeStatus(item.subscriptionStatus, item.reason, item.subscriberLifeCycle),
-    rawStatus: item.subscriptionStatus || "-",
-    chargingAmount: Number(item.chargeAmount || 0),
-    lifecycle: item.subscriberLifeCycle || "-",
-    source: "SDP Callback",
-    flow: item.channel || "SDP",
-    cgid: "",
-    transactionId: item.transactionId || "",
-    requestId: item.requestId || "",
-    createdAt: item.createdAt || item.callbackTimestamp,
-  }));
-
-  const events = [...sdpEvents, ...cgwEvents]
-    .filter((item) => matchesReport(item, report))
-    .filter((item) => matchesSearch(item, search))
-    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-
-  const start = (page - 1) * limit;
-  return {
-    events: events.slice(start, start + limit),
-    total: events.length,
-    summaryEvents: events,
-    range: { from, to },
-  };
-};
-
-const buildSummary = async (events) => {
-  const subscriberKeys = new Set(
-    events
-      .filter((item) => item.status === "success" || item.status === "renewal")
-      .map((item) => item.msisdn)
-      .filter(Boolean)
-  );
-
-  const activeSubscriptions = await User.countDocuments({
-    subscriptionStatus: "active",
-  });
-  const usageTotals = await User.aggregate([
-    { $match: { subscriptionStatus: "active" } },
-    { $group: { _id: null, questionsUsed: { $sum: "$questionsPlayedToday" } } },
-  ]);
+  const counts = reportCounts.counts;
+  const billedEvents = Number(counts.success?.total || 0) + Number(counts.renewal?.total || 0);
 
   return {
-    totalEvents: events.length,
-    totalSubscribers: subscriberKeys.size,
-    totalUsers: await User.countDocuments(),
-    success: events.filter((item) => item.status === "success").length,
-    renewals: events.filter((item) => item.status === "renewal").length,
-    churn: events.filter((item) => item.status === "churn").length,
-    failed: events.filter((item) => item.status === "failed").length,
-    heStarted: events.filter((item) => item.status === "he-started").length,
-    nheStarted: events.filter((item) => item.status === "nhe-started").length,
-    totalGhsAmount: events.reduce((sum, item) => sum + Number(item.chargingAmount || 0), 0),
+    totalEvents: Number(counts.all?.total || pageData.total || 0),
+    totalSubscribers: Number(counts.success?.total || 0),
+    totalUsers,
+    success: Number(counts.success?.total || 0),
+    renewals: Number(counts.renewal?.total || 0),
+    churn: Number(counts.churn?.total || 0),
+    failed: Number(counts.failed?.total || 0),
+    heStarted: 0,
+    nheStarted: 0,
+    totalGhsAmount: billedEvents * catalogDailyPrice,
     activeSubscriptions,
-    questionsUsedToday: usageTotals[0]?.questionsUsed || 0,
+    questionsUsedToday: 0,
+    sources: {
+      success: counts.success,
+      renewal: counts.renewal,
+      churn: counts.churn,
+      failed: counts.failed,
+      all: counts.all,
+    },
   };
-};
-
-const loadDailySubscriptionEvents = async (from, to) => {
-  const createdAt = {
-    $gte: startOfGhanaDay(from),
-    $lte: endOfGhanaDay(to),
-  };
-
-  const [callbacks, sdpLogs, users] = await Promise.all([
-    GhanaCallbackLog.find({ createdAt })
-      .select("msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow rawBody rawQuery")
-      .sort({ createdAt: 1 })
-      .allowDiskUse(true)
-      .maxTimeMS(12000)
-      .lean(),
-    SDPLog.find({ createdAt })
-      .select("msisdn offerCode planId subscriptionStatus subscriberLifeCycle command status lifecycle reason chargeAmount createdAt callbackTimestamp channel")
-      .sort({ createdAt: 1 })
-      .allowDiskUse(true)
-      .maxTimeMS(12000)
-      .lean(),
-    User.find({
-      subscriptionStartTime: createdAt,
-    })
-      .select("phone subscriptionStartTime subscriptionStatus createdAt")
-      .sort({ subscriptionStartTime: 1 })
-      .allowDiskUse(true)
-      .maxTimeMS(12000)
-      .lean(),
-  ]);
-
-  const dailyPlan = getOfferPlan(INITIAL_OFFER_CODE);
-
-  return [
-    ...callbacks.map((item) => ({
-      ...item,
-      source: item.callbackType || "CGW",
-    })),
-    ...sdpLogs.map((item) => ({
-      ...item,
-      source: "SDP",
-      status: item.subscriptionStatus || item.status,
-      lifecycle: item.subscriberLifeCycle || item.lifecycle,
-    })),
-    ...users.map((user) => ({
-      msisdn: user.phone,
-      offerCode: INITIAL_OFFER_CODE,
-      status: "200",
-      lifecycle: "SUB",
-      source: "USER",
-      flow: "LOCAL",
-      chargingAmount: dailyPlan.amountGhs,
-      createdAt: user.subscriptionStartTime || user.createdAt,
-    })),
-  ];
 };
 
 const getDailySubscriptionReport = async (query = {}) => {
   const range = resolveReportRange(query);
-  const events = await loadDailySubscriptionEvents(range.from, range.to);
-  return buildDailySubscriptionReport(events, range);
+  const loaded = await loadDailySubscriptionEvents(range.from, range.to);
+  const events = Array.isArray(loaded) ? loaded : loaded.events || [];
+  const extras = loaded?.extras || {};
+  const report = buildDailySubscriptionReport(events, range);
+  return {
+    ...report,
+    summary: {
+      ...report.summary,
+      renewals: Math.max(Number(report.summary.renewals || 0), Number(extras.renewals || 0)),
+      unsub: Math.max(Number(report.summary.unsub || 0), Number(extras.unsub || 0)),
+    },
+  };
 };
 
 export const getAdminDashboard = async (req, res) => {
   try {
-    const { events, total, summaryEvents, range } = await getAdminEvents(req.query);
-    const summary = await buildSummary(summaryEvents);
+    const pageData = await getPaginatedAdminEvents(req.query);
+    const summary = await buildSummary(req.query, pageData);
     res.json({
       success: true,
       summary,
-      data: events,
-      total,
-      range,
+      data: pageData.events,
+      total: pageData.total,
+      range: pageData.range,
       subscriptionUsage: [],
     });
   } catch (err) {
@@ -346,8 +82,8 @@ export const getAdminDashboard = async (req, res) => {
 
 export const getAdminSubscriptions = async (req, res) => {
   try {
-    const { events, total } = await getAdminEvents(req.query);
-    res.json({ success: true, data: events, total });
+    const { events, total, range } = await getPaginatedAdminEvents(req.query);
+    res.json({ success: true, data: events, total, range });
   } catch (err) {
     console.error("Admin subscriptions error:", err);
     res.status(500).json({ success: false, message: err.message });

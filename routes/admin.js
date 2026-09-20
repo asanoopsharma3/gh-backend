@@ -71,6 +71,10 @@ router.post("/login", (req, res) => {
 router.get("/dashboard", verifyAdminToken, getAdminDashboard);
 router.get("/subscriptions", verifyAdminToken, getAdminSubscriptions);
 router.get("/daily-subscriptions", verifyAdminToken, getDailySubscriptions);
+router.get("/dailysubscriptions", verifyAdminToken, getDailySubscriptions);
+router.get("/dailySubscriptions", verifyAdminToken, getDailySubscriptions);
+router.get("/new-subscriptions", verifyAdminToken, getDailySubscriptions);
+router.get("/reports/daily-subscriptions", verifyAdminToken, getDailySubscriptions);
 router.get("/users", verifyAdminToken, getAllUsers);
 router.delete("/users/:id", verifyAdminToken, deleteUser);
 

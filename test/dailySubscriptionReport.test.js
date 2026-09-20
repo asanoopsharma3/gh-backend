@@ -49,6 +49,16 @@ test("SDP renewals and unsubs are not new subscriptions", () => {
   );
 });
 
+test("SDP success without lifecycle still counts as a new activation", () => {
+  assert.equal(
+    classifySubscriptionEvent({
+      status: "A",
+      source: "SDP",
+    }),
+    "new"
+  );
+});
+
 test("inactive lifecycle is not treated as a new activation", () => {
   assert.equal(
     classifySubscriptionEvent({

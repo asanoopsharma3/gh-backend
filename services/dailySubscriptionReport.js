@@ -229,8 +229,9 @@ export const classifySubscriptionEvent = (item = {}) => {
     compactLifecycle
   );
   const isNewCommand = ["sub", "subscribe", "activation", "activate"].includes(compactCommand);
+  const unknownLifecycle = !compactLifecycle;
 
-  if (billingSuccess && (isNewLifecycle || isNewCommand)) return "new";
+  if (billingSuccess && (isNewLifecycle || isNewCommand || unknownLifecycle)) return "new";
   if (FAILED_STATUSES.has(String(status).trim().toLowerCase())) return "failed";
   return "other";
 };
