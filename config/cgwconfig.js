@@ -10,6 +10,76 @@ export const CALLBACK_URL = process.env.CGW_CALLBACK_URL || `${FRONTEND_BASE_URL
 export const HE_REDIRECT_URL = process.env.CGW_HE_REDIRECT_URL || CALLBACK_URL;
 export const OFFER_CODE = process.env.CGW_OFFER_CODE || "9923310010";
 export const INITIAL_OFFER_CODE = process.env.CGW_INITIAL_OFFER_CODE || OFFER_CODE;
+export const TOPUP_OFFER_CODE = process.env.CGW_TOPUP_OFFER_CODE || "9923310009";
+export const DAILY_PLAN_AMOUNT_GHS = Number(process.env.CGW_DAILY_AMOUNT_GHS || 1);
+export const TOPUP_PLAN_AMOUNT_GHS = Number(process.env.CGW_TOPUP_AMOUNT_GHS || 1);
+
+export const OFFER_CATALOG = {
+  [INITIAL_OFFER_CODE]: {
+    code: INITIAL_OFFER_CODE,
+    name: "Daily Subscription",
+    amountGhs: Number.isFinite(DAILY_PLAN_AMOUNT_GHS) ? DAILY_PLAN_AMOUNT_GHS : 1,
+    billing: "daily",
+  },
+  [TOPUP_OFFER_CODE]: {
+    code: TOPUP_OFFER_CODE,
+    name: "Daily Top-up",
+    amountGhs: Number.isFinite(TOPUP_PLAN_AMOUNT_GHS) ? TOPUP_PLAN_AMOUNT_GHS : 1,
+    billing: "one-time",
+  },
+};
+
+export const getOfferPlan = (offerCode) => {
+  const code = String(offerCode || INITIAL_OFFER_CODE).trim() || INITIAL_OFFER_CODE;
+  return (
+    OFFER_CATALOG[code] || {
+      code,
+      name: code === INITIAL_OFFER_CODE ? "Daily Subscription" : "Other Plan",
+      amountGhs: OFFER_CATALOG[INITIAL_OFFER_CODE]?.amountGhs || 1,
+      billing: "unknown",
+    }
+  );
+};
+
+export const parseChargeAmountGhs = (...values) => {
+  for (const value of values.flat(1)) {
+    if (value === undefined || value === null || value === "") continue;
+    const numeric = Number(String(value).replace(/[^0-9.]/g, ""));
+    if (!Number.isFinite(numeric) || numeric <= 0) continue;
+    // MTN sometimes sends pesewas (100 = GHC 1.00). Daily/top-up is GHC 1.
+    if (numeric >= 50) return Number((numeric / 100).toFixed(2));
+    return Number(numeric.toFixed(2));
+  }
+  return 0;
+};
+
+export const resolvePriceGhs = ({ billedAmount, offerCode, billable = true } = {}) => {
+  const billed = parseChargeAmountGhs(billedAmount);
+  if (billed > 0) {
+    return { priceGhs: billed, priceSource: "billed" };
+  }
+  if (!billable) {
+    return { priceGhs: 0, priceSource: "none" };
+  }
+  const catalogAmount = Number(getOfferPlan(offerCode).amountGhs || 0);
+  return {
+    priceGhs: catalogAmount,
+    priceSource: catalogAmount > 0 ? "catalog" : "none",
+  };
+};
+
+export const normalizeConsentFlow = (...values) => {
+  for (const value of values) {
+    const token = String(value || "")
+      .toUpperCase()
+      .split(/[?&/\s]/)[0]
+      .trim();
+    if (token === "HE" || token === "NHE") return token;
+    if (token === "LOCAL" || token === "WEB") return token;
+    if (token === "SDP") return "SDP";
+  }
+  return "UNKNOWN";
+};
 export const HE_FIXED_MOBILE_NUMBER =
   process.env.CGW_HE_MOBILE_NUMBER ||
   process.env.CGW_HE_FIXED_MOBILE_NUMBER ||

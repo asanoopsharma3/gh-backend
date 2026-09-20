@@ -8,6 +8,16 @@ import {
   calculateCycleState,
   DAILY_QUESTION_LIMIT,
 } from "../services/subscriptionService.js";
+import {
+  buildDailySubscriptionReport,
+  endOfGhanaDay,
+  resolveReportRange,
+  startOfGhanaDay,
+} from "../services/dailySubscriptionReport.js";
+import {
+  INITIAL_OFFER_CODE,
+  getOfferPlan,
+} from "../config/cgwconfig.js";
 
 const startOfDay = (date) => {
   const value = new Date(date);
@@ -259,6 +269,57 @@ const getSubscriptionUsage = async () => {
   });
 };
 
+const loadDailySubscriptionEvents = async (from, to) => {
+  const createdAt = {
+    $gte: startOfGhanaDay(from),
+    $lte: endOfGhanaDay(to),
+  };
+
+  const [callbacks, sdpLogs, users] = await Promise.all([
+    GhanaCallbackLog.find({ createdAt }).sort({ createdAt: 1 }).lean(),
+    SDPLog.find({
+      $or: [{ createdAt }, { callbackTimestamp: createdAt }],
+    }).sort({ createdAt: 1 }).lean(),
+    User.find({
+      subscriptionStartTime: createdAt,
+    })
+      .select("phone subscriptionStartTime subscriptionStatus createdAt")
+      .sort({ subscriptionStartTime: 1 })
+      .lean(),
+  ]);
+
+  const dailyPlan = getOfferPlan(INITIAL_OFFER_CODE);
+
+  return [
+    ...callbacks.map((item) => ({
+      ...item,
+      source: item.callbackType || "CGW",
+    })),
+    ...sdpLogs.map((item) => ({
+      ...item,
+      source: "SDP",
+      status: item.subscriptionStatus || item.status,
+      lifecycle: item.subscriberLifeCycle || item.lifecycle,
+    })),
+    ...users.map((user) => ({
+      msisdn: user.phone,
+      offerCode: INITIAL_OFFER_CODE,
+      status: "200",
+      lifecycle: "SUB",
+      source: "USER",
+      flow: "LOCAL",
+      chargingAmount: dailyPlan.amountGhs,
+      createdAt: user.subscriptionStartTime || user.createdAt,
+    })),
+  ];
+};
+
+const getDailySubscriptionReport = async (query = {}) => {
+  const range = resolveReportRange(query);
+  const events = await loadDailySubscriptionEvents(range.from, range.to);
+  return buildDailySubscriptionReport(events, range);
+};
+
 export const getAdminDashboard = async (req, res) => {
   try {
     const events = await getAdminEvents(req.query);
@@ -277,6 +338,16 @@ export const getAdminSubscriptions = async (req, res) => {
     res.json({ success: true, data: events, total: events.length });
   } catch (err) {
     console.error("Admin subscriptions error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const getDailySubscriptions = async (req, res) => {
+  try {
+    const dailySubscriptions = await getDailySubscriptionReport(req.query);
+    res.json({ success: true, ...dailySubscriptions });
+  } catch (err) {
+    console.error("Daily subscriptions error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 };
