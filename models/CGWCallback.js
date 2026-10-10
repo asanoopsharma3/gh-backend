@@ -1,19 +1,19 @@
-import mongoose from "mongoose";
+import { createModel } from "../db/documentModel.js";
 
-const cgwCallbackSchema = new mongoose.Schema(
-  {
-    method: String,
-    msisdn: String,
-    offerCode: String,
-    status: String,
-    cgid: String,
-    rawQuery: mongoose.Schema.Types.Mixed,
-    rawBody: mongoose.Schema.Types.Mixed,
-    headers: mongoose.Schema.Types.Mixed,
-    ip: String,
-    userAgent: String,
+const CGWCallback = createModel({
+  table: "cgw_callbacks",
+  columns: {
+    method: "method",
+    msisdn: "msisdn",
+    offerCode: "offer_code",
+    status: "status",
+    cgid: "cgid",
+    rawQuery: { column: "raw_query", type: "jsonb" },
+    rawBody: { column: "raw_body", type: "jsonb" },
+    headers: { column: "headers", type: "jsonb" },
+    ip: "ip",
+    userAgent: "user_agent",
   },
-  { timestamps: true, collection: "cgwcallbacks" }
-);
+});
 
-export default mongoose.model("CGWCallback", cgwCallbackSchema);
+export default CGWCallback;

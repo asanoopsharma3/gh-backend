@@ -1,54 +1,21 @@
-import mongoose from "mongoose";
+import { createModel } from "../db/documentModel.js";
 
-const paymentSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-    phone: {
-      type: String,
-      required: true,
-    },
-    referenceId: {
-      type: String,
-      required: true,
-      unique: true,
-    },
-    amount: {
-      type: Number,
-      required: true,
-    },
-    currency: {
-      type: String,
-      default: "SZL",
-    },
-    status: {
-  type: String,
-  enum: ["PENDING", "CREATED", "SUCCESSFUL", "FAILED"],
-  default: "PENDING"
-},
-    reason: {
-      type: String,
-      default: null,
-    },
-    payerMessage: {
-      type: String,
-      default: null,
-    },
-    payeeNote: {
-      type: String,
-      default: null,
-    },
-    rawResponse: {
-      type: Object,
-      default: {},
-    },
+const Payment = createModel({
+  table: "payments",
+  columns: {
+    userId: { column: "user_id", type: "id" },
+    phone: "phone",
+    referenceId: "reference_id",
+    amount: { column: "amount", type: "number" },
+    currency: { column: "currency", default: "SZL" },
+    status: { column: "status", default: "PENDING" },
+    reason: { column: "reason", default: null },
+    payerMessage: { column: "payer_message", default: null },
+    payeeNote: { column: "payee_note", default: null },
+    rawResponse: { column: "raw_response", type: "jsonb", default: () => ({}) },
   },
-  {
-    timestamps: true, 
-  }
-);
+  required: ["userId", "phone", "referenceId", "amount"],
+  refs: { userId: "users" },
+});
 
-export default mongoose.model("Payment", paymentSchema);
+export default Payment;

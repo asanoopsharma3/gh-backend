@@ -1,42 +1,60 @@
-import mongoose from "mongoose";
+import { createModel } from "../db/documentModel.js";
 
-const userSchema = new mongoose.Schema({
-  phone: { type: String, required: true, unique: true },
-  otp: String,
-  otpExpiry: Date,
-  lastOtpSent: Date,
-  isPhoneVerified: { type: Boolean, default: false },
-  verifyAttempts: { type: Number, default: 0 },
-  isAttemptQuiz: { type: Boolean, default: false },
-  currentSzlAssigned: { type: Number, default: 0 },
-  subscriptionStatus: {
-    type: String,
-    enum: ["inactive", "active", "suspended"],
-    default: "inactive",
-    index: true,
+const User = createModel({
+  table: "users",
+  columns: {
+    phone: "phone",
+    otp: "otp",
+    otpExpiry: { column: "otp_expiry", type: "date" },
+    lastOtpSent: { column: "last_otp_sent", type: "date" },
+    isPhoneVerified: { column: "is_phone_verified", type: "boolean", default: false },
+    verifyAttempts: { column: "verify_attempts", type: "number", default: 0 },
+    isAttemptQuiz: { column: "is_attempt_quiz", type: "boolean", default: false },
+    currentSzlAssigned: { column: "current_szl_assigned", type: "number", default: 0 },
+    subscriptionStatus: { column: "subscription_status", default: "inactive" },
+    questionsPlayedToday: { column: "questions_played_today", type: "number", default: 0 },
+    subscriptionStartTime: { column: "subscription_start_time", type: "date", default: null },
+    nextPlayTime: { column: "next_play_time", type: "date", default: null },
+    quizId: { column: "quiz_id", type: "id", default: null },
+    currentQuestionIndex: { column: "current_question_index", type: "number", default: 0 },
+    totalPoints: { column: "total_points", type: "number", default: 0 },
+    totalAmountSpent: { column: "total_amount_spent", type: "number", default: 0 },
+    firstTimeQuiz: { column: "first_time_quiz", type: "boolean", default: true },
+    totalTimeTaken: { column: "total_time_taken", type: "number", default: 0 },
+    name: "name",
+    email: "email",
+    password: "password",
+    role: { column: "role", default: "user" },
   },
-  questionsPlayedToday: { type: Number, default: 0, min: 0 },
-  subscriptionStartTime: { type: Date, default: null, index: true },
-  nextPlayTime: { type: Date, default: null },
-  quizId: { type: mongoose.Schema.Types.ObjectId, ref: "Quiz", default: null },
-  currentQuestionIndex: { type: Number, default: 0 },
-  totalPoints: { type: Number, default: 0 },
-  totalAmountSpent: { type: Number, default: 0 },
-  firstTimeQuiz: { type: Boolean, default: true },
-  totalTimeTaken: { type: Number, default: 0 },
-
-  // ⭐ NEW FIELD - full quiz statistics
-  quizHistory: [
-    {
-      quizId: { type: mongoose.Schema.Types.ObjectId, ref: "Quiz" },
-      totalQuestions: Number,
-      correct: Number,
-      wrong: Number,
-      score: Number,
-      timeTaken: Number,
-      date: { type: Date, default: Date.now }
+  enums: {
+    subscriptionStatus: ["inactive", "active", "suspended"],
+  },
+  relations: {
+    quizHistory: {
+      table: "user_quiz_history",
+      foreignKey: "user_id",
+      order: "id",
+      columns: {
+        quizId: { column: "quiz_id", type: "id" },
+        totalQuestions: { column: "total_questions", type: "number" },
+        correct: { column: "correct", type: "number" },
+        wrong: { column: "wrong", type: "number" },
+        score: { column: "score", type: "number" },
+        timeTaken: { column: "time_taken", type: "number" },
+        date: { column: "played_at", type: "date" },
+      },
+    },
+  },
+  refs: {
+    quizId: "quizzes",
+    "quizHistory.quizId": "quizzes",
+  },
+  beforeSave(doc) {
+    if (!Array.isArray(doc.quizHistory)) doc.quizHistory = [];
+    for (const item of doc.quizHistory) {
+      if (item && item.date == null) item.date = new Date();
     }
-  ]
-}, { timestamps: true });
+  },
+});
 
-export default mongoose.model("User", userSchema);
+export default User;

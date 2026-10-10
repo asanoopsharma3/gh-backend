@@ -1,49 +1,21 @@
-import mongoose from "mongoose";
+import { createModel } from "../db/documentModel.js";
 
-const mtnCallbackSchema = new mongoose.Schema(
-  {
-    referenceId: {
-      type: String,
-      index: true,
-    },
-
-    // 🔑 MAIN UNIQUE KEY (sequenceNo)
-    transactionId: {
-      type: String,
-      unique: true,
-      index: true,
-      required: true,
-    },
-
-    // SUCCESS / FAILED
-    status: {
-      type: String,
-      enum: ["SUCCESS", "FAILED"],
-    },
-
-    // MTN response fields
-    resultCode: String,
-    resultMessage: String,
-
-    phone: String,
-
-    validityDays: String,
-    requestedPlan: String,
-    appliededPlan: String,
-    chargeAmount: String,
-
-    // Full callback payload
-    rawResponse: {
-      type: Object,
-      required: true,
-    },
+const MTNCallbackLog = createModel({
+  table: "mtn_payment_callbacks",
+  columns: {
+    referenceId: "reference_id",
+    transactionId: "transaction_id",
+    status: "status",
+    resultCode: "result_code",
+    resultMessage: "result_message",
+    phone: "phone",
+    validityDays: "validity_days",
+    requestedPlan: "requested_plan",
+    appliededPlan: "applied_plan",
+    chargeAmount: "charge_amount",
+    rawResponse: { column: "raw_response", type: "jsonb" },
   },
-  { timestamps: true }
-);
-
-const MTNCallbackLog = mongoose.model(
-  "mtnpaymentcallbacks",
-  mtnCallbackSchema
-);
+  required: ["transactionId", "rawResponse"],
+});
 
 export default MTNCallbackLog;

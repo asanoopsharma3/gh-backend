@@ -1,25 +1,25 @@
-import mongoose from "mongoose";
+import { createModel } from "../db/documentModel.js";
 
-const sdpCallbackSchema = new mongoose.Schema(
-  {
-    method: String,
-    msisdn: String,
-    transactionId: { type: String, index: true },
-    offerCode: String,
-    status: String,
-    operator: String,
-    operatorResponse: mongoose.Schema.Types.Mixed,
-    callbackTimestamp: { type: Date, default: Date.now, index: true },
-    payloadJson: mongoose.Schema.Types.Mixed,
-    lifecycle: String,
-    reason: String,
-    rawQuery: mongoose.Schema.Types.Mixed,
-    rawBody: mongoose.Schema.Types.Mixed,
-    headers: mongoose.Schema.Types.Mixed,
-    ip: String,
-    userAgent: String,
+const SDPCallback = createModel({
+  table: "sdp_callbacks",
+  columns: {
+    method: "method",
+    msisdn: "msisdn",
+    transactionId: "transaction_id",
+    offerCode: "offer_code",
+    status: "status",
+    operator: "operator",
+    operatorResponse: { column: "operator_response", type: "jsonb" },
+    callbackTimestamp: { column: "callback_timestamp", type: "date", default: () => new Date() },
+    payloadJson: { column: "payload_json", type: "jsonb" },
+    lifecycle: "lifecycle",
+    reason: "reason",
+    rawQuery: { column: "raw_query", type: "jsonb" },
+    rawBody: { column: "raw_body", type: "jsonb" },
+    headers: { column: "headers", type: "jsonb" },
+    ip: "ip",
+    userAgent: "user_agent",
   },
-  { timestamps: true, collection: "sdp_callbacks" }
-);
+});
 
-export default mongoose.model("SDPCallback", sdpCallbackSchema);
+export default SDPCallback;

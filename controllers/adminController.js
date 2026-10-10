@@ -263,7 +263,14 @@ export const uploadCSV = async (req, res) => {
         }
 
         quiz.questions.push(...parsedQuestions);
+        quiz.active = true;
         await quiz.save();
+        const activeQuizzes = await Quiz.find({ active: true });
+        for (const item of activeQuizzes) {
+          if (String(item._id) === String(quiz._id)) continue;
+          item.active = false;
+          await item.save();
+        }
         fs.unlinkSync(req.file.path);
 
         res.json({

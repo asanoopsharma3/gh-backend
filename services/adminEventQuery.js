@@ -1,4 +1,3 @@
-import mongoose from "mongoose";
 import { INITIAL_OFFER_CODE } from "../config/cgwconfig.js";
 import GhanaCallbackLog from "../models/GhanaCallbackLog.js";
 import SDPCallback from "../models/SDPCallback.js";
@@ -76,13 +75,9 @@ const SDP_CALLBACK_SELECT =
 const GHANA_SELECT =
   "msisdn offerCode status normalizedStatus lifecycle reason chargingAmount createdAt callbackType flow";
 
-const objectIdRange = (fromDate, toDate) => {
-  const fromSec = Math.floor(new Date(fromDate).getTime() / 1000);
-  const toSec = Math.floor(new Date(toDate).getTime() / 1000) + 1;
-  const fromId = mongoose.Types.ObjectId.createFromTime(fromSec);
-  const toId = mongoose.Types.ObjectId.createFromTime(toSec);
-  return { _id: { $gte: fromId, $lte: toId } };
-};
+const objectIdRange = (fromDate, toDate) => ({
+  createdAt: { $gte: new Date(fromDate), $lte: new Date(toDate) },
+});
 
 const uniqueDocs = (items) => {
   const seen = new Set();

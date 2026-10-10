@@ -1,17 +1,29 @@
-// models/Quiz.js
-import mongoose from "mongoose";
-const questionSchema = new mongoose.Schema({
-  q: { type: String, required: true },
-  options: [{ type: String, required: true }],
-  correctIndex: { type: Number, required: true } 
+import { createModel } from "../db/documentModel.js";
+
+const Quiz = createModel({
+  table: "quizzes",
+  columns: {
+    title: "title",
+    createdBy: { column: "created_by", type: "id", default: null },
+    active: { column: "active", type: "boolean", default: true },
+  },
+  required: ["title"],
+  relations: {
+    questions: {
+      table: "quiz_questions",
+      foreignKey: "quiz_id",
+      position: "position",
+      order: "position, id",
+      columns: {
+        q: "q",
+        options: { column: "options", type: "text[]" },
+        correctIndex: { column: "correct_index", type: "number" },
+      },
+    },
+  },
+  refs: {
+    createdBy: "users",
+  },
 });
 
-const quizSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  questions: [questionSchema],
-  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  active: { type: Boolean, default: true }
-}, { timestamps: true }); 
-
-const Quiz = mongoose.model("Quiz", quizSchema);
 export default Quiz;

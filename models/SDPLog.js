@@ -1,39 +1,34 @@
-import mongoose from "mongoose";
+import { createModel } from "../db/documentModel.js";
 
-const sdpLogSchema = new mongoose.Schema(
-  {
-    method: String,
-    externalServiceId: String,
-    requestId: { type: String, index: true },
-    requestTimeStamp: String,
-    channel: String,
-    featureId: String,
-    planId: String,
-    command: String,
-    msisdn: { type: String, index: true },
-    offerCode: String,
-    chargeAmount: { type: Number, default: 0 },
-    subscriptionStatus: String,
-    subscriberLifeCycle: String,
-    transactionId: { type: String, index: true },
-    nextBillingDate: String,
-    reason: String,
-    normalizedStatus: String,
-    operator: String,
-    callbackTimestamp: { type: Date, default: Date.now, index: true },
-    payloadJson: mongoose.Schema.Types.Mixed,
-    rawQuery: mongoose.Schema.Types.Mixed,
-    rawBody: mongoose.Schema.Types.Mixed,
-    headers: mongoose.Schema.Types.Mixed,
-    ip: String,
-    userAgent: String,
+const SDPLog = createModel({
+  table: "sdp_logs",
+  columns: {
+    method: "method",
+    externalServiceId: "external_service_id",
+    requestId: "request_id",
+    requestTimeStamp: "request_timestamp",
+    channel: "channel",
+    featureId: "feature_id",
+    planId: "plan_id",
+    command: "command",
+    msisdn: "msisdn",
+    offerCode: "offer_code",
+    chargeAmount: { column: "charge_amount", type: "number", default: 0 },
+    subscriptionStatus: "subscription_status",
+    subscriberLifeCycle: "subscriber_life_cycle",
+    transactionId: "transaction_id",
+    nextBillingDate: "next_billing_date",
+    reason: "reason",
+    normalizedStatus: "normalized_status",
+    operator: "operator",
+    callbackTimestamp: { column: "callback_timestamp", type: "date", default: () => new Date() },
+    payloadJson: { column: "payload_json", type: "jsonb" },
+    rawQuery: { column: "raw_query", type: "jsonb" },
+    rawBody: { column: "raw_body", type: "jsonb" },
+    headers: { column: "headers", type: "jsonb" },
+    ip: "ip",
+    userAgent: "user_agent",
   },
-  { timestamps: true, collection: "sdplog" }
-);
+});
 
-sdpLogSchema.index({ createdAt: -1 });
-sdpLogSchema.index({ callbackTimestamp: -1, createdAt: -1 });
-sdpLogSchema.index({ subscriberLifeCycle: 1, createdAt: -1 });
-sdpLogSchema.index({ normalizedStatus: 1, createdAt: -1 });
-
-export default mongoose.model("SDPLog", sdpLogSchema);
+export default SDPLog;

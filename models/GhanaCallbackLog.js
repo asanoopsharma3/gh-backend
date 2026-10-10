@@ -1,28 +1,26 @@
-import mongoose from "mongoose";
+import { createModel } from "../db/documentModel.js";
 
-const ghanaCallbackLogSchema = new mongoose.Schema(
-  {
-    callbackType: { type: String, enum: ["SDP", "CGW"], required: true },
-    flow: { type: String, enum: ["HE", "NHE", "UNKNOWN"], default: "UNKNOWN" },
-    method: String,
-    msisdn: String,
-    offerCode: String,
-    status: String,
-    normalizedStatus: String,
-    lifecycle: String,
-    reason: String,
-    cgid: String,
-    chargingAmount: { type: Number, default: 0 },
-    rawQuery: mongoose.Schema.Types.Mixed,
-    rawBody: mongoose.Schema.Types.Mixed,
-    headers: mongoose.Schema.Types.Mixed,
-    ip: String,
-    userAgent: String,
+const GhanaCallbackLog = createModel({
+  table: "ghana_callback_logs",
+  columns: {
+    callbackType: "callback_type",
+    flow: { column: "flow", default: "UNKNOWN" },
+    method: "method",
+    msisdn: "msisdn",
+    offerCode: "offer_code",
+    status: "status",
+    normalizedStatus: "normalized_status",
+    lifecycle: "lifecycle",
+    reason: "reason",
+    cgid: "cgid",
+    chargingAmount: { column: "charging_amount", type: "number", default: 0 },
+    rawQuery: { column: "raw_query", type: "jsonb" },
+    rawBody: { column: "raw_body", type: "jsonb" },
+    headers: { column: "headers", type: "jsonb" },
+    ip: "ip",
+    userAgent: "user_agent",
   },
-  { timestamps: true, collection: "ghanacallbacklogs" }
-);
+  required: ["callbackType"],
+});
 
-ghanaCallbackLogSchema.index({ createdAt: -1 });
-ghanaCallbackLogSchema.index({ callbackType: 1, createdAt: -1 });
-
-export default mongoose.model("GhanaCallbackLog", ghanaCallbackLogSchema);
+export default GhanaCallbackLog;

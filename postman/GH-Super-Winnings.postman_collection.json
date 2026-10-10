@@ -1,0 +1,855 @@
+{
+  "info": {
+    "name": "GH Super Winnings API",
+    "description": "Local API collection for every mounted route.\n\nHow to use:\n1. Import this file in Postman.\n2. Open the collection Variables tab and set baseUrl, phone, msisdn, adminEmail, adminPassword, callbackSecret, quizId, userId.\n3. Run Admin > Login or SMS > Verify OTP (or Subscription > Dev Activate). The token is saved automatically into adminToken / userToken.\n4. Edit any request body or query before Send. Values like {{phone}} come from collection variables; you can also type raw JSON directly in the body.\n\nMounted prefixes:\n- Admin routes also exist under /admin-api (same handlers as /api/admin).\n- CGW routes also exist under /cgw (same handlers as /api/cgw).\n- Daily subscription report also exists at /dailysubscriptions, /dailySubscriptions, /new-subscriptions, and /reports/daily-subscriptions.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "userToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "callbackSecret", "value": "" },
+    { "key": "phone", "value": "+233240000333" },
+    { "key": "otp", "value": "123456" },
+    { "key": "msisdn", "value": "233240000333" },
+    { "key": "offerCode", "value": "9923310010" },
+    { "key": "redirectUrl", "value": "http://localhost:5000/api/callback" },
+    { "key": "adminEmail", "value": "admin@unisolutions.in" },
+    { "key": "adminPassword", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "quizId", "value": "" },
+    { "key": "qIndex", "value": "0" },
+    { "key": "fromDate", "value": "2026-10-09" },
+    { "key": "toDate", "value": "2026-10-09" },
+    { "key": "page", "value": "1" },
+    { "key": "limit", "value": "10" },
+    { "key": "report", "value": "all" }
+  ],
+  "item": [
+    {
+      "name": "Local report flow",
+      "description": "Run these in order against the local API. Each callback inserts a new row even when the phone already exists. Only users blocks a duplicate phone.\n\nSDP callback (POST /api/callback with requestParam.data) writes:\n- sdp_logs\n- sdp_callbacks\n- cgw_callback_logs (type SDP)\n- ghana_callback_logs (callback_type SDP)\n- users (create or update)\n\nCGW callback (POST /api/cgw/callback or GET /api/callback) writes:\n- cgw_callbacks\n- cgw_callback_logs (type CGW)\n- ghana_callback_logs (callback_type CGW)\n- users (create or update)\n\nJSONB is only used for raw request/response fields. Set adminPassword from backend .env ADMIN_PASSWORD. Open admin UI at http://localhost:5174/admin/login and set the report dates to today.",
+      "item": [
+        {
+          "name": "1. SDP new charge",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalServiceId\": \"gh-super-winnings\",\n  \"requestId\": \"req-new-{{msisdn}}\",\n  \"requestTimeStamp\": \"2026-10-09T16:12:00Z\",\n  \"channel\": \"CGW\",\n  \"featureId\": \"subscribe\",\n  \"requestParam\": {\n    \"planId\": \"daily\",\n    \"command\": \"NotifyActivation\",\n    \"data\": [\n      { \"name\": \"Msisdn\", \"value\": \"{{msisdn}}\" },\n      { \"name\": \"SubscriptionStatus\", \"value\": \"A\" },\n      { \"name\": \"OfferCode\", \"value\": \"{{offerCode}}\" },\n      { \"name\": \"SubscriberLifeCycle\", \"value\": \"SUB1\" },\n      { \"name\": \"Reason\", \"value\": \"Success\" },\n      { \"name\": \"ChargeAmount\", \"value\": \"100\" },\n      { \"name\": \"TransactionId\", \"value\": \"txn-new-{{msisdn}}\" },\n      { \"name\": \"Operator\", \"value\": \"MTN Ghana\" }\n    ]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/callback",
+            "description": "Writes sdplog, sdp_callbacks, cgwcallbacklogs, ghanacallbacklogs, and users. Response body is OK. Send again to insert another charge row."
+          }
+        },
+        {
+          "name": "2. SDP renewal charge",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalServiceId\": \"gh-super-winnings\",\n  \"requestId\": \"req-ren-{{msisdn}}\",\n  \"requestTimeStamp\": \"2026-10-09T16:12:00Z\",\n  \"channel\": \"CGW\",\n  \"requestParam\": {\n    \"planId\": \"daily\",\n    \"command\": \"NotifyRenewal\",\n    \"data\": [\n      { \"name\": \"Msisdn\", \"value\": \"{{msisdn}}\" },\n      { \"name\": \"SubscriptionStatus\", \"value\": \"A\" },\n      { \"name\": \"OfferCode\", \"value\": \"{{offerCode}}\" },\n      { \"name\": \"SubscriberLifeCycle\", \"value\": \"REN1\" },\n      { \"name\": \"Reason\", \"value\": \"Renewal success\" },\n      { \"name\": \"ChargeAmount\", \"value\": \"100\" },\n      { \"name\": \"TransactionId\", \"value\": \"txn-ren-{{msisdn}}\" }\n    ]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/callback",
+            "description": "Same SDP tables as request 1. SubscriberLifeCycle REN1 shows as renewal in the admin report."
+          }
+        },
+        {
+          "name": "3. CGW callback",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"msisdn\": \"{{msisdn}}\",\n  \"status\": \"200\",\n  \"offerCode\": \"{{offerCode}}\",\n  \"cgid\": \"cg-local-1\",\n  \"flow\": \"NHE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/cgw/callback",
+            "description": "Writes cgwcallbacks, cgwcallbacklogs, ghanacallbacklogs, and users. Status 200 is a successful new subscription in the admin report. Same handler: GET {{baseUrl}}/api/callback?msisdn={{msisdn}}&status=200&offerCode={{offerCode}}&cgid=cg-local-1&flow=NHE"
+          }
+        },
+        {
+          "name": "4. Admin login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.token) pm.collectionVariables.set('adminToken', body.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/admin/login",
+            "description": "Set collection variable adminPassword from backend .env ADMIN_PASSWORD before sending."
+          }
+        },
+        {
+          "name": "5. Admin subscriptions report",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subscriptions?fromDate={{fromDate}}&toDate={{toDate}}&report={{report}}&page={{page}}&limit={{limit}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subscriptions"],
+              "query": [
+                { "key": "fromDate", "value": "{{fromDate}}" },
+                { "key": "toDate", "value": "{{toDate}}" },
+                { "key": "report", "value": "{{report}}", "description": "all, success, renewal, churn, or failed" },
+                { "key": "page", "value": "{{page}}" },
+                { "key": "limit", "value": "{{limit}}" }
+              ]
+            },
+            "description": "Reads ghanacallbacklogs, sdplog, sdp_callbacks, and users for the selected dates."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/health",
+            "description": "GET /api/health — no auth."
+          }
+        },
+        {
+          "name": "Root",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/",
+            "description": "GET / — returns 'Server is running' outside production frontend mode."
+          }
+        }
+      ]
+    },
+    {
+      "name": "SMS",
+      "item": [
+        {
+          "name": "Send OTP",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{phone}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/sms/send-otp",
+            "description": "POST /api/sms/send-otp\nPhone must match +268 followed by 8 digits. Change {{phone}} in collection variables or type the number directly in the body."
+          }
+        },
+        {
+          "name": "Verify OTP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.token) pm.collectionVariables.set('userToken', body.token);",
+                  "  if (body.user && body.user._id) pm.collectionVariables.set('userId', body.user._id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{phone}}\",\n  \"otp\": \"{{otp}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/sms/verify-otp",
+            "description": "POST /api/sms/verify-otp\nOn success, userToken and userId are saved for the Quiz, Subscription status, and MTN payment requests."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Subscription",
+      "item": [
+        {
+          "name": "Dev activate (local only)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.token) pm.collectionVariables.set('userToken', body.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"msisdn\": \"{{msisdn}}\",\n  \"offerCode\": \"{{offerCode}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/subscription/dev-activate",
+            "description": "POST /api/subscription/dev-activate\nWorks only when ENABLE_LOCAL_SUBSCRIPTION=true. Accepts msisdn, phone, or mobileNumber. Saves userToken on success."
+          }
+        },
+        {
+          "name": "Subscription status",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/subscription/status",
+            "description": "GET /api/subscription/status — Bearer userToken."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Quiz",
+      "item": [
+        {
+          "name": "Get question set",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/quiz/questionset",
+            "description": "GET /api/quiz/questionset — Bearer userToken. User must have an active subscription."
+          }
+        },
+        {
+          "name": "Update question index",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newIndex\": 1,\n  \"quizId\": \"{{quizId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/quiz/update-index",
+            "description": "POST /api/quiz/update-index — body: newIndex, quizId."
+          }
+        },
+        {
+          "name": "Mark quiz attempted",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"score\": 10,\n  \"correct\": 10,\n  \"wrong\": 0,\n  \"timeTaken\": 120\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/quiz/mark-attempted",
+            "description": "POST /api/quiz/mark-attempted — body: score, correct, wrong, timeTaken. Score of 10 unlocks the next set."
+          }
+        },
+        {
+          "name": "Leaderboard",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/quiz/leaderboard",
+            "description": "GET /api/quiz/leaderboard — Bearer userToken."
+          }
+        },
+        {
+          "name": "Reset daily attempt",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/quiz/reset-daily-attempt",
+            "description": "POST /api/quiz/reset-daily-attempt — no body fields required."
+          }
+        },
+        {
+          "name": "Add quiz",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Sample Quiz\",\n  \"active\": true,\n  \"questions\": [\n    {\n      \"q\": \"What is 2 + 2?\",\n      \"options\": [\"3\", \"4\", \"5\", \"6\"],\n      \"correctIndex\": 1\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/quiz/add",
+            "description": "POST /api/quiz/add — no auth on this route. Body: title, questions[], active."
+          }
+        },
+        {
+          "name": "Attempt quiz",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quizId\": \"{{quizId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/quiz/attempt",
+            "description": "POST /api/quiz/attempt — body: quizId."
+          }
+        },
+        {
+          "name": "Quiz status",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/quiz/status",
+            "description": "GET /api/quiz/status — returns isAttemptQuiz for the logged-in user."
+          }
+        }
+      ]
+    },
+    {
+      "name": "MTN Payment",
+      "item": [
+        {
+          "name": "All payment status",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/mtn/payment/status",
+            "description": "GET /api/mtn/payment/status — Bearer userToken."
+          }
+        },
+        {
+          "name": "Payment status by logged-in user",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{userToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/mtn/payment/statusbyid",
+            "description": "GET /api/mtn/payment/statusbyid — uses the user id inside the JWT."
+          }
+        },
+        {
+          "name": "Renewal transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/mtn/payment/mtn-renewals",
+            "description": "GET /api/mtn/payment/mtn-renewals — no auth."
+          }
+        },
+        {
+          "name": "Unsubscribe transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/mtn/payment/mtn-unsubscribe",
+            "description": "GET /api/mtn/payment/mtn-unsubscribe — no auth."
+          }
+        },
+        {
+          "name": "Payment status by phone",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{phone}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/mtn/details/payment-status",
+            "description": "POST /api/mtn/details/payment-status — body: phone."
+          }
+        }
+      ]
+    },
+    {
+      "name": "CGW",
+      "item": [
+        {
+          "name": "Activate subscription",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-callback-secret", "value": "{{callbackSecret}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"msisdn\": \"{{msisdn}}\",\n  \"offerCode\": \"{{offerCode}}\",\n  \"redirectUrl\": \"{{redirectUrl}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/cgw/activate?offerCode={{offerCode}}&msisdn={{msisdn}}&redirectUrl={{redirectUrl}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cgw", "activate"],
+              "query": [
+                { "key": "offerCode", "value": "{{offerCode}}" },
+                { "key": "msisdn", "value": "{{msisdn}}" },
+                { "key": "redirectUrl", "value": "{{redirectUrl}}" }
+              ]
+            },
+            "description": "POST /api/cgw/activate\nSame handler is also at POST /cgw/activate. Sends x-callback-secret from {{callbackSecret}} (or Authorization Bearer with the same secret). Redirects to the consent gateway when MSISDN is valid (233...)."
+          }
+        },
+        {
+          "name": "Activate subscription (/cgw)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-callback-secret", "value": "{{callbackSecret}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"msisdn\": \"{{msisdn}}\",\n  \"offerCode\": \"{{offerCode}}\",\n  \"redirectUrl\": \"{{redirectUrl}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/cgw/activate",
+            "description": "POST /cgw/activate — duplicate mount of /api/cgw/activate."
+          }
+        },
+        {
+          "name": "Public callback (SDP body)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalServiceId\": \"sample-service\",\n  \"requestId\": \"req-1\",\n  \"requestTimeStamp\": \"2026-10-02T10:00:00Z\",\n  \"channel\": \"SMS\",\n  \"featureId\": \"subscribe\",\n  \"requestParam\": {\n    \"planId\": \"plan-1\",\n    \"command\": \"NotifyActivation\",\n    \"data\": [\n      { \"name\": \"Msisdn\", \"value\": \"{{msisdn}}\" },\n      { \"name\": \"SubscriptionStatus\", \"value\": \"A\" },\n      { \"name\": \"OfferCode\", \"value\": \"{{offerCode}}\" },\n      { \"name\": \"SubscriberLifeCycle\", \"value\": \"SUB1\" },\n      { \"name\": \"Reason\", \"value\": \"Success\" },\n      { \"name\": \"ChargeAmount\", \"value\": \"100\" },\n      { \"name\": \"TransactionId\", \"value\": \"txn-1\" },\n      { \"name\": \"Operator\", \"value\": \"MTN Ghana\" }\n    ]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/callback",
+            "description": "POST /api/callback — SDP-style payload. Replace the sample fields before sending. This route accepts any HTTP method."
+          }
+        },
+        {
+          "name": "Public callback (CGW query)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/callback?msisdn={{msisdn}}&status=success&offerCode={{offerCode}}&cgid=cg-1&flow=NHE",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "callback"],
+              "query": [
+                { "key": "msisdn", "value": "{{msisdn}}" },
+                { "key": "status", "value": "success" },
+                { "key": "offerCode", "value": "{{offerCode}}" },
+                { "key": "cgid", "value": "cg-1" },
+                { "key": "flow", "value": "NHE", "description": "HE or NHE" }
+              ]
+            },
+            "description": "GET /api/callback — browser-style CGW callback. Edit query values in Params."
+          }
+        },
+        {
+          "name": "CGW callback",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"msisdn\": \"{{msisdn}}\",\n  \"status\": \"success\",\n  \"offerCode\": \"{{offerCode}}\",\n  \"cgid\": \"cg-1\",\n  \"flow\": \"NHE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/cgw/callback",
+            "description": "POST /api/cgw/callback. Same handler is also at /cgw/callback."
+          }
+        },
+        {
+          "name": "CGW callback (/cgw)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"msisdn\": \"{{msisdn}}\",\n  \"status\": \"success\",\n  \"offerCode\": \"{{offerCode}}\",\n  \"cgid\": \"cg-1\",\n  \"flow\": \"HE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/cgw/callback",
+            "description": "POST /cgw/callback — duplicate mount of /api/cgw/callback."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.token) pm.collectionVariables.set('adminToken', body.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/admin/login",
+            "description": "POST /api/admin/login\nUses ADMIN_EMAIL and ADMIN_PASSWORD from the server .env. On success, adminToken is saved. Same route exists at POST /admin-api/login."
+          }
+        },
+        {
+          "name": "Dashboard",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/dashboard?fromDate={{fromDate}}&toDate={{toDate}}&page={{page}}&limit={{limit}}&report={{report}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "dashboard"],
+              "query": [
+                { "key": "fromDate", "value": "{{fromDate}}", "description": "YYYY-MM-DD. Also accepts from or startDate." },
+                { "key": "toDate", "value": "{{toDate}}", "description": "YYYY-MM-DD. Also accepts to or endDate." },
+                { "key": "page", "value": "{{page}}" },
+                { "key": "limit", "value": "{{limit}}" },
+                { "key": "report", "value": "{{report}}", "description": "all, success, renewal, churn, or failed" }
+              ]
+            },
+            "description": "GET /api/admin/dashboard — Bearer adminToken."
+          }
+        },
+        {
+          "name": "Subscriptions",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subscriptions?fromDate={{fromDate}}&toDate={{toDate}}&page={{page}}&limit={{limit}}&report={{report}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subscriptions"],
+              "query": [
+                { "key": "fromDate", "value": "{{fromDate}}" },
+                { "key": "toDate", "value": "{{toDate}}" },
+                { "key": "page", "value": "{{page}}" },
+                { "key": "limit", "value": "{{limit}}" },
+                { "key": "report", "value": "{{report}}", "description": "all, success, renewal, churn, or failed" }
+              ]
+            },
+            "description": "GET /api/admin/subscriptions — Bearer adminToken."
+          }
+        },
+        {
+          "name": "Daily subscriptions",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/daily-subscriptions?from={{fromDate}}&to={{toDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "daily-subscriptions"],
+              "query": [
+                { "key": "from", "value": "{{fromDate}}", "description": "YYYY-MM-DD. Also accepts startDate or date." },
+                { "key": "to", "value": "{{toDate}}", "description": "YYYY-MM-DD. Also accepts endDate." }
+              ]
+            },
+            "description": "GET /api/admin/daily-subscriptions. Aliases with the same handler: /dailysubscriptions, /dailySubscriptions, /new-subscriptions, /reports/daily-subscriptions."
+          }
+        },
+        {
+          "name": "Daily subscriptions alias - dailysubscriptions",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/admin/dailysubscriptions?from={{fromDate}}&to={{toDate}}",
+            "description": "GET /api/admin/dailysubscriptions"
+          }
+        },
+        {
+          "name": "Daily subscriptions alias - dailySubscriptions",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/admin/dailySubscriptions?from={{fromDate}}&to={{toDate}}",
+            "description": "GET /api/admin/dailySubscriptions"
+          }
+        },
+        {
+          "name": "Daily subscriptions alias - new-subscriptions",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/admin/new-subscriptions?from={{fromDate}}&to={{toDate}}",
+            "description": "GET /api/admin/new-subscriptions"
+          }
+        },
+        {
+          "name": "Daily subscriptions alias - reports",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/admin/reports/daily-subscriptions?from={{fromDate}}&to={{toDate}}",
+            "description": "GET /api/admin/reports/daily-subscriptions"
+          }
+        },
+        {
+          "name": "List users",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/users?subscriptionStatus=active",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "users"],
+              "query": [
+                {
+                  "key": "subscriptionStatus",
+                  "value": "active",
+                  "description": "Set to active to filter, or disable this param to list all users."
+                }
+              ]
+            },
+            "description": "GET /api/admin/users — Bearer adminToken."
+          }
+        },
+        {
+          "name": "Delete user",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/admin/users/{{userId}}",
+            "description": "DELETE /api/admin/users/:id — set {{userId}} before sending. This deletes the user."
+          }
+        },
+        {
+          "name": "Create quiz",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Admin Quiz\",\n  \"questions\": [\n    {\n      \"q\": \"Capital of Ghana?\",\n      \"options\": [\"Kumasi\", \"Accra\", \"Tamale\", \"Takoradi\"],\n      \"correctIndex\": 1\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/admin/quizzes",
+            "description": "POST /api/admin/quizzes — body: title, questions[]."
+          }
+        },
+        {
+          "name": "List quizzes",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/admin/quizzes",
+            "description": "GET /api/admin/quizzes. Copy a quiz _id into the quizId variable."
+          }
+        },
+        {
+          "name": "Get quiz by id",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/admin/quizzes/{{quizId}}",
+            "description": "GET /api/admin/quizzes/:quizId"
+          }
+        },
+        {
+          "name": "Add question",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quizId\": \"{{quizId}}\",\n  \"q\": \"2 + 2 = ?\",\n  \"options\": [\"3\", \"4\", \"5\", \"6\"],\n  \"correctIndex\": 1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/admin/quizzes/questions",
+            "description": "POST /api/admin/quizzes/questions — body: quizId, q, options, correctIndex."
+          }
+        },
+        {
+          "name": "Update question",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"q\": \"Updated question?\",\n  \"options\": [\"A\", \"B\", \"C\", \"D\"],\n  \"correctIndex\": 0\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/admin/quizzes/{{quizId}}/questions/{{qIndex}}",
+            "description": "PUT /api/admin/quizzes/:quizId/questions/:qIndex — qIndex is 0-based."
+          }
+        },
+        {
+          "name": "Delete question",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/admin/quizzes/{{quizId}}/questions/{{qIndex}}",
+            "description": "DELETE /api/admin/quizzes/:quizId/questions/:qIndex"
+          }
+        },
+        {
+          "name": "Upload questions CSV",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "", "description": "CSV with columns q, option1, option2, option3, option4, correctIndex" },
+                { "key": "quizId", "value": "{{quizId}}", "type": "text", "description": "Leave empty to create a new quiz." },
+                { "key": "title", "value": "CSV Quiz", "type": "text" }
+              ]
+            },
+            "url": "{{baseUrl}}/api/admin/quizzes/upload-csv",
+            "description": "POST /api/admin/quizzes/upload-csv — choose a CSV file in the Body tab. Field name must be file."
+          }
+        }
+      ]
+    }
+  ]
+}

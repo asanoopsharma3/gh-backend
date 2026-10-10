@@ -1,14 +1,14 @@
-import mongoose from "mongoose";
+import { createModel } from "../db/documentModel.js";
 
-const msisdnLogSchema = new mongoose.Schema(
-  {
-    msisdn: String,
-    source: { type: String, default: "HE" },
-    offerCode: String,
-    ip: String,
-    userAgent: String,
+const MsisdnLog = createModel({
+  table: "msisdn_logs",
+  columns: {
+    msisdn: "msisdn",
+    source: { column: "source", default: "HE" },
+    offerCode: "offer_code",
+    ip: "ip",
+    userAgent: "user_agent",
   },
-  { timestamps: true }
-);
+});
 
-export default mongoose.model("MsisdnLog", msisdnLogSchema);
+export default MsisdnLog;

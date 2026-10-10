@@ -1,38 +1,17 @@
+import { createModel } from "../db/documentModel.js";
 
-import mongoose from "mongoose";
-
-const questionSchema = new mongoose.Schema(
-  {
-    question: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    options: {
-      type: [String],
-      validate: {
-        validator: (arr) => arr.length >= 2,
-        message: "At least 2 options are required.",
-      },
-      required: true,
-    },
-    correctIndex: {
-      type: Number,
-      required: true,
-      validate: {
-        validator: function (val) {
-          return val >= 0 && val < this.options.length;
-        },
-        message: "Correct index must match one of the options.",
-      },
-    },
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
+const Question = createModel({
+  table: "questions",
+  columns: {
+    question: "question",
+    options: { column: "options", type: "text[]" },
+    correctIndex: { column: "correct_index", type: "number" },
+    createdBy: { column: "created_by", type: "id" },
   },
-  { timestamps: true }
-);
+  required: ["question", "options", "correctIndex", "createdBy"],
+  refs: {
+    createdBy: "users",
+  },
+});
 
-export default mongoose.model("Question", questionSchema);
+export default Question;

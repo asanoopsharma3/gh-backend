@@ -110,24 +110,19 @@ export const getQuestionSet = async (req, res) => {
       });
     }
 
-    let { quizId } = user;
-    if (!quizId) {
-      const activeQuiz = await Quiz.findOne({ active: true });
-      if (!activeQuiz) {
+    let quiz = user.quizId ? await Quiz.findById(user.quizId) : null;
+    if (!quiz?.questions?.length) {
+      const activeQuizzes = await Quiz.find({ active: true }).sort({ createdAt: -1 });
+      quiz = activeQuizzes.find((item) => item.questions?.length) || null;
+      if (!quiz) {
         return res.status(404).json({
           success: false,
-          message: "No active quizzes available.",
+          message: "No active quizzes available. Upload a quiz CSV from admin.",
         });
       }
-      quizId = activeQuiz._id;
-      user.quizId = quizId;
+      user.quizId = quiz._id;
       user.currentQuestionIndex = 0;
       await user.save();
-    }
-
-    const quiz = await Quiz.findById(quizId);
-    if (!quiz) {
-      return res.status(404).json({ success: false, message: "Quiz not found." });
     }
 
     const questionSet = shuffleArray(quiz.questions)

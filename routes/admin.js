@@ -1,5 +1,6 @@
 // admin.js
 import express from "express";
+import fs from "fs";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 import multer from "multer";
@@ -20,6 +21,7 @@ import {
 
 dotenv.config();
 const router = express.Router();
+fs.mkdirSync("uploads", { recursive: true });
 const upload = multer({ dest: "uploads/" });
 
 // ---------------- JWT Middleware ----------------

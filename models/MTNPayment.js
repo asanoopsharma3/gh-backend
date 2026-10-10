@@ -1,41 +1,19 @@
-import mongoose from "mongoose";
+import { createModel } from "../db/documentModel.js";
 
-const mtnPaymentSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-    phone: {
-      type: String,
-      required: true,
-    },
-    subscriptionId: {
-      type: String,
-      required: true,
-    },
-    subscriptionName: {
-      type: String,
-    },
-    referenceId: {
-      type: String, // MTN API se milne wala unique reference ID
-    },
-    status: {
-      type: String,
-      enum: ["PENDING", "SUCCESS", "FAILED"],
-      default: "SUCCESS",
-    },
-    userUpdated: {
-      type: Boolean,
-      default: false,
-    },
-    rawResponse: {
-      type: Object, // pure MTN API ka response save karne ke liye
-    },
+const MTNPayment = createModel({
+  table: "mtn_payments",
+  columns: {
+    userId: { column: "user_id", type: "id" },
+    phone: "phone",
+    subscriptionId: "subscription_id",
+    subscriptionName: "subscription_name",
+    referenceId: "reference_id",
+    status: { column: "status", default: "SUCCESS" },
+    userUpdated: { column: "user_updated", type: "boolean", default: false },
+    rawResponse: { column: "raw_response", type: "jsonb" },
   },
-  { timestamps: true }
-);
+  required: ["userId", "phone", "subscriptionId"],
+  refs: { userId: "users" },
+});
 
-const MTNPayment = mongoose.model("MTNPayment", mtnPaymentSchema);
 export default MTNPayment;
