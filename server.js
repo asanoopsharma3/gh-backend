@@ -4,7 +4,7 @@ import cors from "cors";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import connectDB from "./config/db.js";
+import connectDB, { getPool } from "./config/db.js";
 import authRoutes from "./routes/authRoutes.js";
 import subscriptionAccessRoutes from "./routes/subscriptionAccessRoutes.js";
 import adminRoutes from "./routes/admin.js";
@@ -24,8 +24,6 @@ const __dirname = path.dirname(__filename);
 const publicDirectory = path.resolve(
   process.env.PUBLIC_DIR || path.join(__dirname, "public")
 );
-
-connectDB();
 
 const staticAllowedOrigins = [
   process.env.FRONTEND_BASE_URL,
@@ -77,12 +75,23 @@ app.use("/cgw", cgwRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/admin-api", adminRoutes);
 
-app.get("/api/health", (req, res) => {
-  res.json({
-    success: true,
-    service: "ghsuperwinnings-api",
-    timestamp: new Date().toISOString(),
-  });
+app.get("/api/health", async (req, res) => {
+  try {
+    await getPool().query("SELECT 1");
+    res.json({
+      success: true,
+      service: "ghsuperwinnings-api",
+      database: "postgresql",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({
+      success: false,
+      service: "ghsuperwinnings-api",
+      database: "postgresql",
+      message: "Database unavailable",
+    });
+  }
 });
 
 const indexHtmlPath = path.join(publicDirectory, "index.html");
@@ -131,8 +140,14 @@ app.use((error, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+
+const start = async () => {
+  await connectDB();
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+};
+
+start();
 
 

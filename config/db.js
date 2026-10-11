@@ -68,6 +68,11 @@ export async function ensureReady() {
 }
 
 const connectDB = async () => {
+  if (process.env.MONGO_URI) {
+    console.error("MONGO_URI is set. This API uses only PostgreSQL. Remove MONGO_URI before starting.");
+    process.exit(1);
+  }
+
   try {
     await ensureReady();
     console.log(`PostgreSQL connected: ${process.env.DB_HOST}/${process.env.DB_DATABASE}`);
