@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { logCallback } from "../utils/callbackLogger.js";
 
 const safeEqual = (left, right) => {
   const leftBuffer = Buffer.from(String(left || ""));
@@ -34,12 +35,12 @@ export const validateCallbackRequest = (req, res, next) => {
   const requestIp = forwardedIp || req.socket.remoteAddress || "";
 
   if (allowedIps.length && !allowedIps.includes(requestIp)) {
-    console.warn("[SDP CALLBACK REJECTED] IP:", requestIp);
+    logCallback("SDP CALLBACK", "rejected", { reason: "forbidden_ip", ip: requestIp });
     return res.status(403).json({ success: false, message: "Forbidden" });
   }
 
   if (configuredSecret && !safeEqual(getProvidedSecret(req), configuredSecret)) {
-    console.warn("[SDP CALLBACK REJECTED] Invalid signature/secret");
+    logCallback("SDP CALLBACK", "rejected", { reason: "invalid_secret", ip: requestIp });
     return res.status(401).json({ success: false, message: "Invalid callback credentials" });
   }
 
@@ -52,9 +53,9 @@ export const validateCallbackRequest = (req, res, next) => {
   }
 
   if (!configuredSecret && !allowedIps.length) {
-    console.warn(
-      "[SDP CALLBACK SECURITY] Configure SDP_CALLBACK_SECRET or SDP_CALLBACK_ALLOWED_IPS in production."
-    );
+    logCallback("SDP CALLBACK", "security", {
+      message: "Configure SDP_CALLBACK_SECRET or SDP_CALLBACK_ALLOWED_IPS in production",
+    });
   }
 
   next();

@@ -20,6 +20,7 @@ import GhanaCallbackLog from "../models/GhanaCallbackLog.js";
 import MsisdnLog from "../models/MsisdnLog.js";
 import SDPCallback from "../models/SDPCallback.js";
 import SDPLog from "../models/SDPLog.js";
+import { logCallback, savedId } from "../utils/callbackLogger.js";
 
 const createToken = (id) =>
   jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "30d" });
@@ -124,6 +125,7 @@ const normalizeSdpStatus = (status = "", lifecycle = "", reason = "") => {
   const lifecycleText = String(lifecycle).toUpperCase();
   const reasonText = String(reason).toLowerCase();
 
+  if (lifecycleText.includes("UNSUB") || reasonText.includes("unsub")) return "unsub";
   if (lifecycleText.includes("REN") || reasonText.includes("renew")) return "renewal";
   if (
     reasonText.includes("insufficient") ||
@@ -132,10 +134,20 @@ const normalizeSdpStatus = (status = "", lifecycle = "", reason = "") => {
   ) {
     return "churn";
   }
+  if (isSdpSuccessStatus(status, lifecycle) || mapCGWStatus(status).success) return "success";
   if (["D", "S", "INACTIVE", "SUSPENDED", "UNSUB", "UNSUBSCRIBED"].includes(statusText)) {
     return "failed";
   }
   return statusText ? "failed" : "unknown";
+};
+
+const saveCallbackRecord = async (channel, store, create) => {
+  try {
+    return await create();
+  } catch (error) {
+    logCallback(channel, "save_error", { store, message: error.message });
+    return null;
+  }
 };
 
 export const startHeaderEnrichmentRedirect = async (req, res) => {
@@ -227,9 +239,21 @@ export const handleCGWCallback = async (req, res) => {
         getPayloadValue(req.body, ["operator", "network"]) ||
         "MTN Ghana";
       const normalizedStatus = normalizeSdpStatus(status, lifecycle, reason);
+      const command = req.body.requestParam?.command || "";
 
-      console.log("SDP CALLBACK DATA:");
-      console.log(JSON.stringify(req.body, null, 2));
+      logCallback("SDP CALLBACK", "received", {
+        method: req.method,
+        msisdn,
+        offerCode,
+        status,
+        lifecycle,
+        normalized: normalizedStatus,
+        reason,
+        command,
+        charge: chargeAmount,
+        txn: transactionId,
+        requestId: req.body.requestId,
+      });
 
       const sdpPayload = {
         type: "SDP",
@@ -240,7 +264,7 @@ export const handleCGWCallback = async (req, res) => {
         channel: req.body.channel,
         featureId: req.body.featureId,
         planId: req.body.requestParam?.planId,
-        command: req.body.requestParam?.command,
+        command,
         msisdn,
         transactionId,
         offerCode,
@@ -262,49 +286,52 @@ export const handleCGWCallback = async (req, res) => {
         ...getClientMeta(req),
       };
 
-      const savedSdpCallback = await CGWCallbackLog.create(sdpPayload).catch((error) => {
-        console.error("SDP callback DB save error:", error.message);
-        return null;
-      });
+      const savedSdpCallback = await saveCallbackRecord("SDP CALLBACK", "cgw_callback_logs", () =>
+        CGWCallbackLog.create(sdpPayload)
+      );
+      const savedDedicated = await saveCallbackRecord("SDP CALLBACK", "sdp_callbacks", () =>
+        SDPCallback.create(sdpPayload)
+      );
+      const savedSdpLog = await saveCallbackRecord("SDP CALLBACK", "sdp_logs", () => SDPLog.create(sdpPayload));
+      const savedGhana = await saveCallbackRecord("SDP CALLBACK", "ghana_callback_logs", () =>
+        GhanaCallbackLog.create({
+          callbackType: "SDP",
+          flow: detectFlow(req),
+          method: req.method,
+          msisdn,
+          offerCode,
+          status,
+          normalizedStatus,
+          lifecycle,
+          reason,
+          chargingAmount: chargeAmount,
+          rawQuery: req.query,
+          rawBody: req.body,
+          headers: req.headers,
+          ...getClientMeta(req),
+        })
+      );
 
-      await SDPCallback.create(sdpPayload).catch((error) => {
-        console.error("SDP dedicated callback DB save error:", error.message);
-      });
+      let subscription = "-";
+      if (msisdn) {
+        const user = await applySubscriptionStatus(msisdn, status, lifecycle, offerCode);
+        subscription = user?.subscriptionStatus || "-";
+      }
 
-      const savedSdpLog = await SDPLog.create(sdpPayload).catch((error) => {
-        console.error("SDP sdplog DB save error:", error.message);
-        return null;
-      });
-
-      await GhanaCallbackLog.create({
-        callbackType: "SDP",
-        flow: detectFlow(req),
-        method: req.method,
+      logCallback("SDP CALLBACK", "saved", {
         msisdn,
         offerCode,
         status,
-        normalizedStatus,
         lifecycle,
+        normalized: normalizedStatus,
         reason,
-        chargingAmount: chargeAmount,
-        rawQuery: req.query,
-        rawBody: req.body,
-        headers: req.headers,
-        ...getClientMeta(req),
-      }).catch((error) => {
-        console.error("Ghana SDP callback log DB save error:", error.message);
+        charge: chargeAmount,
+        subscription,
+        cgwLog: savedId(savedSdpCallback),
+        sdpCallback: savedId(savedDedicated),
+        sdpLog: savedId(savedSdpLog),
+        ghanaLog: savedId(savedGhana),
       });
-
-      if (savedSdpCallback) {
-        console.log("SDP callback saved in DB:", savedSdpCallback._id.toString());
-      }
-      if (savedSdpLog) {
-        console.log("SDP callback saved in sdplog:", savedSdpLog._id.toString());
-      }
-
-      if (msisdn) {
-        await applySubscriptionStatus(msisdn, status, lifecycle);
-      }
 
       return res.status(200).send("OK");
     }
@@ -317,20 +344,26 @@ export const handleCGWCallback = async (req, res) => {
     });
     callbackData.msisdn = normalizeMsisdn(callbackData.msisdn);
     const offerCode = callbackData.offerId || req.query.offerCode || INITIAL_OFFER_CODE;
-
-    console.log("========== CGW CALLBACK RECEIVED ==========");
-    console.log("Method:", req.method);
-    console.log("MSISDN:", callbackData.msisdn || "-");
-    console.log("OfferCode:", offerCode || "-");
-    console.log("Status:", callbackData.status || "-");
-    console.log("CGID:", callbackData.cgid || "-");
-    console.log("Query:", JSON.stringify(req.query));
-    console.log("Body:", JSON.stringify(req.body));
-
     const statusMapping =
       callbackData.status !== undefined && callbackData.status !== null
         ? mapCGWStatus(callbackData.status, { offerCode })
         : null;
+    const activationSuccess = Boolean(statusMapping?.success || isSdpSuccessStatus(callbackData.status));
+    const cgwResult = callbackData.status === undefined || callbackData.status === null
+      ? "missing_status"
+      : activationSuccess
+        ? "success"
+        : "failed";
+
+    logCallback("CGW CALLBACK", "received", {
+      method: req.method,
+      msisdn: callbackData.msisdn,
+      offerCode,
+      status: callbackData.status,
+      cgid: callbackData.cgid,
+      result: cgwResult,
+      reason: statusMapping?.message,
+    });
     const cgwPayload = {
       type: "CGW",
       method: req.method,
@@ -344,45 +377,56 @@ export const handleCGWCallback = async (req, res) => {
       ...getClientMeta(req),
     };
 
-    const savedCgwCallback = await CGWCallbackLog.create(cgwPayload).catch((error) => {
-      console.error("CGW callback DB save error:", error.message);
-      return null;
-    });
+    const savedCgwCallback = await saveCallbackRecord("CGW CALLBACK", "cgw_callback_logs", () =>
+      CGWCallbackLog.create(cgwPayload)
+    );
+    const savedDedicated = await saveCallbackRecord("CGW CALLBACK", "cgw_callbacks", () =>
+      CGWCallback.create(cgwPayload)
+    );
+    const savedGhana = await saveCallbackRecord("CGW CALLBACK", "ghana_callback_logs", () =>
+      GhanaCallbackLog.create({
+        callbackType: "CGW",
+        flow: detectFlow(req),
+        method: req.method,
+        msisdn: callbackData.msisdn,
+        offerCode,
+        status: callbackData.status,
+        normalizedStatus: activationSuccess ? "success" : "failed",
+        reason: statusMapping?.message,
+        cgid: callbackData.cgid,
+        rawQuery: req.query,
+        rawBody: req.body,
+        headers: req.headers,
+        ...getClientMeta(req),
+      })
+    );
 
-    await CGWCallback.create(cgwPayload).catch((error) => {
-      console.error("CGW dedicated callback DB save error:", error.message);
-    });
-
-    await GhanaCallbackLog.create({
-      callbackType: "CGW",
-      flow: detectFlow(req),
-      method: req.method,
-      msisdn: callbackData.msisdn,
-      offerCode,
-      status: callbackData.status,
-      normalizedStatus: statusMapping?.success ? "success" : "failed",
-      reason: statusMapping?.message,
-      cgid: callbackData.cgid,
-      rawQuery: req.query,
-      rawBody: req.body,
-      headers: req.headers,
-      ...getClientMeta(req),
-    }).catch((error) => {
-      console.error("Ghana CGW callback log DB save error:", error.message);
-    });
-
-    if (savedCgwCallback) {
-      console.log("CGW callback saved in DB:", savedCgwCallback._id.toString());
-    }
-
-
-    if (statusMapping?.success || isSdpSuccessStatus(callbackData.status)) {
-      const user = await applySubscriptionStatus(
+    let subscription = "-";
+    let user = null;
+    if (activationSuccess) {
+      user = await applySubscriptionStatus(
         callbackData.msisdn,
         callbackData.status,
         "",
         offerCode
       );
+      subscription = user?.subscriptionStatus || "-";
+    }
+
+    logCallback("CGW CALLBACK", "saved", {
+      msisdn: callbackData.msisdn,
+      offerCode,
+      status: callbackData.status,
+      cgid: callbackData.cgid,
+      result: cgwResult,
+      reason: statusMapping?.message,
+      subscription,
+      cgwLog: savedId(savedCgwCallback),
+      cgwCallback: savedId(savedDedicated),
+      ghanaLog: savedId(savedGhana),
+    });
+
+    if (user && subscription === "active") {
       const token = createToken(user._id);
       const params = new URLSearchParams({
         token,
@@ -403,7 +447,7 @@ export const handleCGWCallback = async (req, res) => {
 
     return res.redirect(`${FRONTEND_BASE_URL}/activation/callback?${params.toString()}`);
   } catch (error) {
-    console.error("CGW callback error:", error.message);
+    logCallback("CALLBACK", "error", { message: error.message });
     const params = new URLSearchParams({
       subscribed: "false",
       reason: "Callback processing error",

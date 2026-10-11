@@ -25,8 +25,10 @@ const toDateOnly = (value) => {
 export const resolveAdminRange = (query = {}, now = new Date()) => {
   const today = ghanaDate(now);
   const monthStart = `${today.slice(0, 7)}-01`;
-  const fromInput = toDateOnly(query.fromDate || query.from || query.startDate) || monthStart;
-  const toInput = toDateOnly(query.toDate || query.to || query.endDate) || fromInput || today;
+  const explicitFrom = toDateOnly(query.fromDate || query.from || query.startDate);
+  const explicitTo = toDateOnly(query.toDate || query.to || query.endDate);
+  const fromInput = explicitFrom || monthStart;
+  const toInput = explicitTo || (explicitFrom ? explicitFrom : today);
 
   let from = fromInput || monthStart;
   let to = toInput || today;
@@ -96,39 +98,68 @@ const findNoSort = (model, label, filter, select, limit = SCAN) =>
     model.find(filter).select(select).limit(limit).maxTimeMS(QUERY_TIME_MS).lean()
   );
 
-const renewalMatch = {
-  $or: [
-    { subscriberLifeCycle: /ren/i },
-    { lifecycle: /ren/i },
-    { normalizedStatus: /renew/i },
-    { reason: /renew/i },
-    { command: /renew/i },
-  ],
+const CHURN_CODES = ["2", "26", "29", "55", "63", "111", "G", "g"];
+
+const renewalMatchFor = (model) => {
+  if (model === "sdpLog") {
+    return {
+      $or: [
+        { subscriberLifeCycle: /ren/i },
+        { normalizedStatus: /renew/i },
+        { reason: /renew/i },
+        { command: /renew/i },
+      ],
+    };
+  }
+  if (model === "sdpCallback") {
+    return {
+      $or: [{ lifecycle: /ren/i }, { reason: /renew/i }],
+    };
+  }
+  return {
+    $or: [{ lifecycle: /ren/i }, { normalizedStatus: /renew/i }, { reason: /renew/i }],
+  };
 };
 
-const churnMatch = {
-  $or: [
-    { normalizedStatus: /churn/i },
-    { reason: /insufficient|low balance|churn/i },
-    { subscriptionStatus: { $in: ["2", "26", "29", "55", "63", "111", "G", "g"] } },
-    { status: { $in: ["2", "26", "29", "55", "63", "111", "G", "g"] } },
-  ],
+const churnMatchFor = (model) => {
+  if (model === "sdpLog") {
+    return {
+      $or: [
+        { normalizedStatus: /churn/i },
+        { reason: /insufficient|low balance|churn/i },
+        { subscriptionStatus: { $in: CHURN_CODES } },
+      ],
+    };
+  }
+  if (model === "sdpCallback") {
+    return {
+      $or: [{ reason: /insufficient|low balance|churn/i }, { status: { $in: CHURN_CODES } }],
+    };
+  }
+  return {
+    $or: [
+      { normalizedStatus: /churn/i },
+      { reason: /insufficient|low balance|churn/i },
+      { status: { $in: CHURN_CODES } },
+    ],
+  };
 };
 
 const findSdpByDate = async (fromDate, toDate, report = "all") => {
   const tsRange = { callbackTimestamp: { $gte: fromDate, $lte: toDate } };
   const createdRange = { createdAt: { $gte: fromDate, $lte: toDate } };
   const idRange = objectIdRange(fromDate, toDate);
-  const targeted = report === "renewal" ? renewalMatch : report === "churn" ? churnMatch : null;
+  const targeted = report === "renewal" || report === "churn";
 
   if (targeted) {
-    const filterFor = (timeFilter) => ({ $and: [timeFilter, targeted] });
+    const sdpLogMatch = report === "renewal" ? renewalMatchFor("sdpLog") : churnMatchFor("sdpLog");
+    const callbackMatch = report === "renewal" ? renewalMatchFor("sdpCallback") : churnMatchFor("sdpCallback");
     const docs = await Promise.all([
-      findNoSort(SDPLog, "SDPLog.createdAt.report", filterFor(createdRange), SDP_SELECT, REPORT_SCAN),
-      findNoSort(SDPLog, "SDPLog.callbackTimestamp.report", filterFor(tsRange), SDP_SELECT, REPORT_SCAN),
-      findNoSort(SDPLog, "SDPLog._id.report", filterFor(idRange), SDP_SELECT, REPORT_SCAN),
-      findNoSort(SDPCallback, "SDPCallback.createdAt.report", filterFor(createdRange), SDP_CALLBACK_SELECT, REPORT_SCAN),
-      findNoSort(SDPCallback, "SDPCallback.callbackTimestamp.report", filterFor(tsRange), SDP_CALLBACK_SELECT, REPORT_SCAN),
+      findNoSort(SDPLog, "SDPLog.createdAt.report", { $and: [createdRange, sdpLogMatch] }, SDP_SELECT, REPORT_SCAN),
+      findNoSort(SDPLog, "SDPLog.callbackTimestamp.report", { $and: [tsRange, sdpLogMatch] }, SDP_SELECT, REPORT_SCAN),
+      findNoSort(SDPLog, "SDPLog._id.report", { $and: [idRange, sdpLogMatch] }, SDP_SELECT, REPORT_SCAN),
+      findNoSort(SDPCallback, "SDPCallback.createdAt.report", { $and: [createdRange, callbackMatch] }, SDP_CALLBACK_SELECT, REPORT_SCAN),
+      findNoSort(SDPCallback, "SDPCallback.callbackTimestamp.report", { $and: [tsRange, callbackMatch] }, SDP_CALLBACK_SELECT, REPORT_SCAN),
     ]);
     return uniqueDocs(docs.flat());
   }
@@ -145,12 +176,12 @@ const findSdpByDate = async (fromDate, toDate, report = "all") => {
 
 const findCgwByDate = async (fromDate, toDate, report = "all") => {
   const createdRange = { createdAt: { $gte: fromDate, $lte: toDate } };
-  const targeted = report === "renewal" ? renewalMatch : report === "churn" ? churnMatch : null;
-  if (targeted) {
+  if (report === "renewal" || report === "churn") {
+    const ghanaMatch = report === "renewal" ? renewalMatchFor("ghana") : churnMatchFor("ghana");
     return findNoSort(
       GhanaCallbackLog,
       "GhanaCallbackLog.report",
-      { $and: [createdRange, targeted] },
+      { $and: [createdRange, ghanaMatch] },
       GHANA_SELECT,
       REPORT_SCAN
     );
