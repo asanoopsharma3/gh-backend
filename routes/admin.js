@@ -18,26 +18,12 @@ import {
   getAdminSubscriptions,
   getDailySubscriptions,
 } from "../controllers/adminController.js";
+import { verifyAdminToken, verifyAdminOrApiKey } from "../middleware/adminAuth.js";
 
 dotenv.config();
 const router = express.Router();
 fs.mkdirSync("uploads", { recursive: true });
 const upload = multer({ dest: "uploads/" });
-
-// ---------------- JWT Middleware ----------------
-const verifyAdminToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ success: false, message: "No token provided" });
-
-  const token = authHeader.split(" ")[1];
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.admin = decoded; // optional: store decoded info in req
-    next();
-  } catch (err) {
-    return res.status(401).json({ success: false, message: "Invalid or expired token" });
-  }
-};
 
 // ---------------- Admin Login ----------------
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
@@ -70,13 +56,13 @@ router.post("/login", (req, res) => {
 });
 
 // ---------------- Users ----------------
-router.get("/dashboard", verifyAdminToken, getAdminDashboard);
-router.get("/subscriptions", verifyAdminToken, getAdminSubscriptions);
-router.get("/daily-subscriptions", verifyAdminToken, getDailySubscriptions);
-router.get("/dailysubscriptions", verifyAdminToken, getDailySubscriptions);
-router.get("/dailySubscriptions", verifyAdminToken, getDailySubscriptions);
-router.get("/new-subscriptions", verifyAdminToken, getDailySubscriptions);
-router.get("/reports/daily-subscriptions", verifyAdminToken, getDailySubscriptions);
+router.get("/dashboard", verifyAdminOrApiKey, getAdminDashboard);
+router.get("/subscriptions", verifyAdminOrApiKey, getAdminSubscriptions);
+router.get("/daily-subscriptions", verifyAdminOrApiKey, getDailySubscriptions);
+router.get("/dailysubscriptions", verifyAdminOrApiKey, getDailySubscriptions);
+router.get("/dailySubscriptions", verifyAdminOrApiKey, getDailySubscriptions);
+router.get("/new-subscriptions", verifyAdminOrApiKey, getDailySubscriptions);
+router.get("/reports/daily-subscriptions", verifyAdminOrApiKey, getDailySubscriptions);
 router.get("/users", verifyAdminToken, getAllUsers);
 router.delete("/users/:id", verifyAdminToken, deleteUser);
 
